@@ -1,0 +1,11 @@
+{
+	"name": "telegram-bot",
+	"version": "1.0.0",
+	"description": "My first Telegram bot",
+	"main": "index.js",
+	"scripts": {
+		"start": "node index.js"
+	},
+	"author": "Ihor Moroz",
+	"license": "ISC"
+}
