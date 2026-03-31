@@ -1,1 +1,3 @@
-console.log("Hello from Node.js");
+const db = require('./db');
+
+console.log("DB connected");
