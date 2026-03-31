@@ -6,14 +6,14 @@ db.serialize(() => {
 	db.run(`
 		CREATE TABLE IF NOT EXISTS days (
       	id INTEGER PRIMARY KEY AUTOINCREMENT,
-      	name TEXT
+      	date TEXT
 		)
 	`);
 
 	db.run(`
 		CREATE TABLE IF NOT EXISTS places (
       	id INTEGER PRIMARY KEY AUTOINCREMENT,
-      	date TEXT
+      	name TEXT
 		)
 	`);
 
