@@ -6,21 +6,35 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 
 /*
 bot.start((ctx) => {
-	db.all(`SELECT * FROM test`, [], (err, rows) => {
+	db.all(`
+	 SELECT places.name as place_name, items.name as item_name, items.default_quantity
+	 FROM items
+	 JOIN places ON items.place_id = places.id
+	 ORDER BY places.id
+  `, [], (err, rows) => {
+
 		if (err) {
 			ctx.reply('DB error');
 			return;
 		}
 
-		let message = 'Дані з бази:\n\n';
+		let message = 'Заявка (шаблон)\n\n';
+		let currentPlace = '';
+
 		rows.forEach((row) => {
-			message += `${row.id}. ${row.name}\n`;
+			if (currentPlace !== row.place_name) {
+				currentPlace = row.place_name;
+				message += `\n${currentPlace}\n`;
+			}
+
+			message += `• ${row.item_name} - ${row.default_quantity}\n`;
 		});
 
 		ctx.reply(message);
 	});
 });
-
+*/
+/*
 db.serialize(() => {
 	// Додаємо заклади
 	db.run(`INSERT INTO places (name) VALUES (?)`, ["O'cake #1"]);
@@ -95,6 +109,7 @@ db.serialize(() => {
 	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (5, 'Міні Birthday Cake', 0)`);
 });
 */
+
 
 bot.launch();
 
