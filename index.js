@@ -7,13 +7,28 @@ db.run(
 	function (err) {
 		if (err) {
 			console.error(err);
-		} else {
-			console.log("Inserted row with id:" , this.lastID)
-		}
-	} 
-);
+			return;
+		} 
 
 
-db.all(`SELECT * FROM test`, [], (err, rows) => {
-	console.log('All rows: ', rows );
-});
+		db.all(`SELECT * FROM test`, [], (err, rows) => {
+			console.log('Before update: ', rows );
+
+
+			db.run('UPDATE test SET name = ? WHERE id = ?', 
+				['Piter', this.lastID],
+				function (err) {
+				if (err) {
+					console.error(err);
+					return;
+					}
+					
+					
+					db.all(`SELECT * FROM test`, [], (err, rows) => {
+						console.log('After update:', rows);
+					});
+				}
+			);
+		});
+	}
+);			
