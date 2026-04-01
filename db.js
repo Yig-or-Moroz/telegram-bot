@@ -13,7 +13,7 @@ db.serialize(() => {
 	db.run(`
 		CREATE TABLE IF NOT EXISTS places (
       	id INTEGER PRIMARY KEY AUTOINCREMENT,
-      	name TEXT
+      	name TEXT UNIQUE
 		)
 	`);
 
@@ -22,7 +22,8 @@ db.serialize(() => {
       	id INTEGER PRIMARY KEY AUTOINCREMENT,
       	place_id INTEGER,
 			name TEXT,
-			default_quantity INTEGER
+			days_of_week INTEGER,
+			UNIQUE(name, place_id)
 		)
 	`);
 
@@ -31,15 +32,7 @@ db.serialize(() => {
       	id INTEGER PRIMARY KEY AUTOINCREMENT,
       	day_id INTEGER,
 			item_id INTEGER,
-			quantity INTEGER
-		)
-	`);
-
-	db.run(`
-		CREATE TABLE IF NOT EXISTS delivery (
-      	id INTEGER PRIMARY KEY AUTOINCREMENT,
-      	day_id INTEGER,
-			name TEXT,
+			quantity INTEGER,
 			comment TEXT
 		)
 	`);

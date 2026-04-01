@@ -4,113 +4,172 @@ const db = require('./db');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-/*
-bot.start((ctx) => {
-	db.all(`
-	 SELECT places.name as place_name, items.name as item_name, items.default_quantity
-	 FROM items
-	 JOIN places ON items.place_id = places.id
-	 ORDER BY places.id
-  `, [], (err, rows) => {
+function getTodayDate() {
+	return new Date().toISOString().split('T')[0];
+}
 
-		if (err) {
-			ctx.reply('DB error');
-			return;
-		}
+function getDayNumber() {
+	const d = new Date().getDay();
+	return d === 0 ? 7 : d; // 1-7 (Mon-Sun)
+}
 
-		let message = 'Заявка (шаблон)\n\n';
-		let currentPlace = '';
+/* -------------------- SEED DATABASE -------------------- */
 
-		rows.forEach((row) => {
-			if (currentPlace !== row.place_name) {
-				currentPlace = row.place_name;
-				message += `\n${currentPlace}\n`;
-			}
+async function seedDatabase() {
+	// Places
+	const places = [
+		"O'cake #1",
+		"O'cake #2",
+		"O'cake #3",
+		"O'cake #4",
+		"O'cake #5",
+		"Доставка"
+	];
 
-			message += `• ${row.item_name} - ${row.default_quantity}\n`;
+	for (const name of places) {
+		await run(`INSERT OR IGNORE INTO places (name) VALUES (?)`, [name]);
+	}
+
+	// Map id by name
+	const placesMap = {};
+	const rows = await all(`SELECT id, name FROM places`);
+	rows.forEach(p => placesMap[p.name] = p.id);
+
+	// Items template
+	const templateItems = [
+		// 1,3,5
+		...["O'cake #1", "O'cake #4", "O'cake #5"].flatMap(place =>
+			baseItems().map(name => ({ name, days: "1,3,5", place }))
+		),
+
+		// 1,2,4,6
+		...["O'cake #2", "O'cake #3"].flatMap(place =>
+			baseItems().map(name => ({ name, days: "1,2,4,6", place }))
+		),
+
+		// Delivery every day
+		...baseItems().map(name => ({
+			name,
+			days: "1,2,3,4,5,6,7",
+			place: "Доставка"
+		}))
+	];
+
+	for (const it of templateItems) {
+		await run(
+			`INSERT OR IGNORE INTO items (name, days_of_week, place_id)
+       VALUES (?, ?, ?)`,
+			[it.name, it.days, placesMap[it.place]]
+		);
+	}
+
+	console.log('DB seeded');
+}
+
+function baseItems() {
+	return [
+		"8", "15", "40", "Манго", "Рулет", "Амаретто",
+		"Міні Фісташка", "Міні Тоффі", "Міні Оксамит",
+		"Міні Амаретто", "Міні Birthday Cake"
+	];
+}
+
+/* -------------------- HELPERS -------------------- */
+
+function run(sql, params = []) {
+	return new Promise((res, rej) => {
+		db.run(sql, params, function (err) {
+			if (err) rej(err);
+			else res(this);
 		});
-
-		ctx.reply(message);
 	});
+}
+
+function get(sql, params = []) {
+	return new Promise((res, rej) => {
+		db.get(sql, params, (err, row) => {
+			if (err) rej(err);
+			else res(row);
+		});
+	});
+}
+
+function all(sql, params = []) {
+	return new Promise((res, rej) => {
+		db.all(sql, params, (err, rows) => {
+			if (err) rej(err);
+			else res(rows);
+		});
+	});
+}
+
+/* -------------------- CREATE DAY -------------------- */
+
+async function getOrCreateToday() {
+	const date = getTodayDate();
+	const dayNumber = getDayNumber();
+
+	let day = await get(`SELECT * FROM days WHERE date = ?`, [date]);
+	if (day) return day;
+
+	const result = await run(`INSERT INTO days (date) VALUES (?)`, [date]);
+	const dayId = result.lastID;
+
+	const items = await all(`SELECT * FROM items`);
+
+	for (const item of items) {
+		if (item.days_of_week.includes(dayNumber.toString())) {
+
+			// Дізнаємось до якого місця належить item
+			const place = await get(
+				`SELECT name FROM places WHERE id = ?`,
+				[item.place_id]
+			);
+
+			// Якщо це "Доставка" → quantity = 0
+			const qty = place.name === 'Доставка' ? 0 : 1;
+
+			await run(
+				`INSERT INTO day_items (day_id, item_id, quantity)
+       VALUES (?, ?, ?)`,
+				[dayId, item.id, qty]
+			);
+		}
+	}
+
+	return { id: dayId, date };
+}
+
+/* -------------------- BOT -------------------- */
+
+bot.start(async (ctx) => {
+	const day = await getOrCreateToday();
+
+	const rows = await all(`
+    SELECT di.quantity, i.name, p.name as place
+    FROM day_items di
+    JOIN items i ON di.item_id = i.id
+    JOIN places p ON i.place_id = p.id
+    WHERE di.day_id = ? AND di.quantity > 0
+    ORDER BY p.id, i.id
+  `, [day.id]);
+
+	let text = `Заявка на ${day.date}\n\n`;
+	let currentPlace = '';
+
+	rows.forEach(row => {
+		if (row.place !== currentPlace) {
+			currentPlace = row.place;
+			text += `\n${currentPlace}\n`;
+		}
+		text += `• ${row.name} — ${row.quantity}\n`;
+	});
+
+	ctx.reply(text);
 });
-*/
-/*
-db.serialize(() => {
-	// Додаємо заклади
-	db.run(`INSERT INTO places (name) VALUES (?)`, ["O'cake #1"]);
-	db.run(`INSERT INTO places (name) VALUES (?)`, ["O'cake #2"]);
-	db.run(`INSERT INTO places (name) VALUES (?)`, ["O'cake #3"]);
-	db.run(`INSERT INTO places (name) VALUES (?)`, ["O'cake #4"]);
-	db.run(`INSERT INTO places (name) VALUES (?)`, ["O'cake #5"]);
 
-	// Додаємо позиції для Закладу #1 (place_id = 1)
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (1, 'Вісім', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (1, "П'ятнадцять", 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (1, 'Сорок', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (1, 'Манго', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (1, 'Рулет', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (1, 'Амаретто', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (1, 'Міні Фісташка', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (1, 'Міні Тоффі', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (1, 'Міні Осаке', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (1, 'Міні Амаретто', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (1, 'Міні Birthday Cake', 0)`);
+/* -------------------- START -------------------- */
 
-	// Позиції для Закладу #2 (place_id = 2)
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (2, 'Вісім', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (2, "П'ятнадцять", 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (2, 'Сорок', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (2, 'Манго', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (2, 'Рулет', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (2, 'Амаретто', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (2, 'Міні Фісташка', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (2, 'Міні Тоффі', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (2, 'Міні Осаке', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (2, 'Міні Амаретто', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (2, 'Міні Birthday Cake', 0)`);
-	
-	// Позиції для Закладу #3 (place_id = 3)
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (3, 'Вісім', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (3, "П'ятнадцять", 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (3, 'Сорок', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (3, 'Манго', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (3, 'Рулет', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (3, 'Амаретто', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (3, 'Міні Фісташка', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (3, 'Міні Тоффі', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (3, 'Міні Осаке', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (3, 'Міні Амаретто', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (3, 'Міні Birthday Cake', 0)`);
-	
-	// Позиції для Закладу #4 (place_id = 4)
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (4, 'Вісім', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (4, "П'ятнадцять", 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (4, 'Сорок', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (4, 'Манго', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (4, 'Рулет', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (4, 'Амаретто', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (4, 'Міні Фісташка', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (4, 'Міні Тоффі', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (4, 'Міні Осаке', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (4, 'Міні Амаретто', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (4, 'Міні Birthday Cake', 0)`);
-	
-	// Позиції для Закладу #5 (place_id = 5)
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (5, 'Вісім', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (5, "П'ятнадцять", 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (5, 'Сорок', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (5, 'Манго', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (5, 'Рулет', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (5, 'Амаретто', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (5, 'Міні Фісташка', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (5, 'Міні Тоффі', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (5, 'Міні Осаке', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (5, 'Міні Амаретто', 0)`);
-	db.run(`INSERT INTO items (place_id, name, default_quantity) VALUES (5, 'Міні Birthday Cake', 0)`);
+seedDatabase().then(() => {
+	bot.launch();
 });
-*/
-
-
-bot.launch();
-
-console.log('Bot started');
