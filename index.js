@@ -15,62 +15,71 @@ function getDayNumber() {
 
 /* -------------------- SEED DATABASE -------------------- */
 
-async function seedDatabase() {
-	// Places
+async function seedItems() {
+	for (const name of baseItems()) {
+		await run(`INSERT OR IGNORE INTO items (name) VALUES (?)`, [name]);
+	}
+}
+
+async function seedPlaces() {
 	const places = [
-		"O'cake #1",
-		"O'cake #2",
-		"O'cake #3",
-		"O'cake #4",
-		"O'cake #5",
+		"Соборна",
+		"Пирогова",
+		"Космо",
+		"Петроцентр",
+		"Вокзал",
 		"Доставка"
 	];
 
 	for (const name of places) {
 		await run(`INSERT OR IGNORE INTO places (name) VALUES (?)`, [name]);
 	}
+}
 
-	// Map id by name
-	const placesMap = {};
-	const rows = await all(`SELECT id, name FROM places`);
-	rows.forEach(p => placesMap[p.name] = p.id);
+async function seedPlaceItems() {
+	const items = await all(`SELECT * FROM items`);
+	const places = await all(`SELECT * FROM places`);
 
-	// Items template
-	const templateItems = [
-		// 1,3,5
-		...["O'cake #1", "O'cake #4", "O'cake #5"].flatMap(place =>
-			baseItems().map(name => ({ name, days: "1,3,5", place }))
-		),
+	const placeMap = {};
+	places.forEach(p => placeMap[p.name] = p.id);
 
-		// 1,2,4,6
-		...["O'cake #2", "O'cake #3"].flatMap(place =>
-			baseItems().map(name => ({ name, days: "1,2,4,6", place }))
-		),
+	const itemMap = {};
+	items.forEach(i => itemMap[i.name] = i.id);
 
-		// Delivery every day
-		...baseItems().map(name => ({
-			name,
-			days: "1,2,3,4,5,6,7",
-			place: "Доставка"
-		}))
-	];
-
-	for (const it of templateItems) {
-		await run(
-			`INSERT OR IGNORE INTO items (name, days_of_week, place_id)
-       VALUES (?, ?, ?)`,
-			[it.name, it.days, placesMap[it.place]]
-		);
+	// 1,3,5
+	for (const place of ["Соборна", "Вокзал", "Вокзал"]) {
+		for (const name of baseItems()) {
+			await run(`
+        INSERT OR IGNORE INTO place_items (place_id, item_id, days_of_week)
+        VALUES (?, ?, ?)
+      `, [placeMap[place], itemMap[name], "1,3,5"]);
+		}
 	}
 
-	console.log('DB seeded');
+	// 1,2,4,6
+	for (const place of ["Пирогова", "Космо"]) {
+		for (const name of baseItems()) {
+			await run(`
+        INSERT OR IGNORE INTO place_items (place_id, item_id, days_of_week)
+        VALUES (?, ?, ?)
+      `, [placeMap[place], itemMap[name], "1,2,4,6"]);
+		}
+	}
+
+	// Доставка — але days є, просто quantity = 0 при створенні дня
+	for (const name of baseItems()) {
+		await run(`
+      INSERT OR IGNORE INTO place_items (place_id, item_id, days_of_week)
+      VALUES (?, ?, ?)
+    `, [placeMap["Доставка"], itemMap[name], "1,2,3,4,5,6,7"]);
+	}
 }
 
 function baseItems() {
 	return [
-		"8", "15", "40", "Манго", "Рулет", "Амаретто",
+		"Оксамит", "Тоффі", "Фісташка", "Манго", "Рулет", "Амаретто",
 		"Міні Фісташка", "Міні Тоффі", "Міні Оксамит",
-		"Міні Амаретто", "Міні Birthday Cake"
+		"Міні Амаретто", "Міні Свято", "Міні Birthday Cake", "Снікерс"
 	];
 }
 
@@ -115,25 +124,21 @@ async function getOrCreateToday() {
 	const result = await run(`INSERT INTO days (date) VALUES (?)`, [date]);
 	const dayId = result.lastID;
 
-	const items = await all(`SELECT * FROM items`);
+	const placeItems = await all(`
+    SELECT pi.*, p.name as place
+    FROM place_items pi
+    JOIN places p ON pi.place_id = p.id
+  `);
 
-	for (const item of items) {
-		if (item.days_of_week.includes(dayNumber.toString())) {
+	for (const pi of placeItems) {
+		if (pi.days_of_week.includes(dayNumber.toString())) {
 
-			// Дізнаємось до якого місця належить item
-			const place = await get(
-				`SELECT name FROM places WHERE id = ?`,
-				[item.place_id]
-			);
+			const quantity = pi.place === "Доставка" ? 0 : 1;
 
-			// Якщо це "Доставка" → quantity = 0
-			const qty = place.name === 'Доставка' ? 0 : 1;
-
-			await run(
-				`INSERT INTO day_items (day_id, item_id, quantity)
-       VALUES (?, ?, ?)`,
-				[dayId, item.id, qty]
-			);
+			await run(`
+        INSERT INTO day_items (day_id, place_item_id, quantity)
+        VALUES (?, ?, ?)
+      `, [dayId, pi.id, quantity]);
 		}
 	}
 
@@ -146,13 +151,14 @@ bot.start(async (ctx) => {
 	const day = await getOrCreateToday();
 
 	const rows = await all(`
-    SELECT di.quantity, i.name, p.name as place
-    FROM day_items di
-    JOIN items i ON di.item_id = i.id
-    JOIN places p ON i.place_id = p.id
-    WHERE di.day_id = ? AND di.quantity > 0
-    ORDER BY p.id, i.id
-  `, [day.id]);
+  SELECT di.quantity, i.name, p.name as place
+  FROM day_items di
+  JOIN place_items pi ON di.place_item_id = pi.id
+  JOIN items i ON pi.item_id = i.id
+  JOIN places p ON pi.place_id = p.id
+  WHERE di.day_id = ? AND di.quantity > 0
+  ORDER BY p.id, i.id
+`, [day.id]);
 
 	let text = `Заявка на ${day.date}\n\n`;
 	let currentPlace = '';
@@ -170,6 +176,11 @@ bot.start(async (ctx) => {
 
 /* -------------------- START -------------------- */
 
-seedDatabase().then(() => {
+(async () => {
+	await seedItems();
+	await seedPlaces();
+	await seedPlaceItems();
+
+	console.log('Seeding done');
 	bot.launch();
-});
+})();
