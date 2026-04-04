@@ -1,87 +1,10 @@
 require('dotenv').config();
-const { Telegraf } = require('telegraf');
+const { Telegraf, Markup, session } = require('telegraf');
 const db = require('./db');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-function getTodayDate() {
-	return new Date().toISOString().split('T')[0];
-}
-
-function getDayNumber() {
-	const d = new Date().getDay();
-	return d === 0 ? 7 : d; // 1-7 (Mon-Sun)
-}
-
-/* -------------------- SEED DATABASE -------------------- */
-
-async function seedItems() {
-	for (const name of baseItems()) {
-		await run(`INSERT OR IGNORE INTO items (name) VALUES (?)`, [name]);
-	}
-}
-
-async function seedPlaces() {
-	const places = [
-		"Соборна",
-		"Пирогова",
-		"Космо",
-		"Петроцентр",
-		"Вокзал",
-		"Доставка"
-	];
-
-	for (const name of places) {
-		await run(`INSERT OR IGNORE INTO places (name) VALUES (?)`, [name]);
-	}
-}
-
-async function seedPlaceItems() {
-	const items = await all(`SELECT * FROM items`);
-	const places = await all(`SELECT * FROM places`);
-
-	const placeMap = {};
-	places.forEach(p => placeMap[p.name] = p.id);
-
-	const itemMap = {};
-	items.forEach(i => itemMap[i.name] = i.id);
-
-	// 1,3,5
-	for (const place of ["Соборна", "Вокзал", "Вокзал"]) {
-		for (const name of baseItems()) {
-			await run(`
-        INSERT OR IGNORE INTO place_items (place_id, item_id, days_of_week)
-        VALUES (?, ?, ?)
-      `, [placeMap[place], itemMap[name], "1,3,5"]);
-		}
-	}
-
-	// 1,2,4,6
-	for (const place of ["Пирогова", "Космо"]) {
-		for (const name of baseItems()) {
-			await run(`
-        INSERT OR IGNORE INTO place_items (place_id, item_id, days_of_week)
-        VALUES (?, ?, ?)
-      `, [placeMap[place], itemMap[name], "1,2,4,6"]);
-		}
-	}
-
-	// Доставка — але days є, просто quantity = 0 при створенні дня
-	for (const name of baseItems()) {
-		await run(`
-      INSERT OR IGNORE INTO place_items (place_id, item_id, days_of_week)
-      VALUES (?, ?, ?)
-    `, [placeMap["Доставка"], itemMap[name], "1,2,3,4,5,6,7"]);
-	}
-}
-
-function baseItems() {
-	return [
-		"Оксамит", "Тоффі", "Фісташка", "Манго", "Рулет", "Амаретто",
-		"Міні Фісташка", "Міні Тоффі", "Міні Оксамит",
-		"Міні Амаретто", "Міні Свято", "Міні Birthday Cake", "Снікерс"
-	];
-}
+bot.use(session());
 
 /* -------------------- HELPERS -------------------- */
 
@@ -112,6 +35,15 @@ function all(sql, params = []) {
 	});
 }
 
+function getTodayDate() {
+	return new Date().toISOString().split('T')[0];
+}
+
+function getDayNumber() {
+	const d = new Date().getDay();
+	return d === 0 ? 7 : d; // 1-7
+}
+
 /* -------------------- CREATE DAY -------------------- */
 
 async function getOrCreateToday() {
@@ -124,63 +56,176 @@ async function getOrCreateToday() {
 	const result = await run(`INSERT INTO days (date) VALUES (?)`, [date]);
 	const dayId = result.lastID;
 
-	const placeItems = await all(`
-    SELECT pi.*, p.name as place
-    FROM place_items pi
-    JOIN places p ON pi.place_id = p.id
+	// беремо шаблон з place_items
+	const templates = await all(`
+    SELECT *
+    FROM place_items
   `);
 
-	for (const pi of placeItems) {
-		if (pi.days_of_week.includes(dayNumber.toString())) {
-
-			const quantity = pi.place === "Доставка" ? 0 : 1;
-
+	for (const t of templates) {
+		if (t.days_of_week.includes(dayNumber.toString())) {
 			await run(`
-        INSERT INTO day_items (day_id, place_item_id, quantity)
-        VALUES (?, ?, ?)
-      `, [dayId, pi.id, quantity]);
+        INSERT INTO day_items (day_id, place_item_id, quantity, comment)
+        VALUES (?, ?, ?, '')
+      `, [dayId, t.id, t.default_quantity]);
 		}
 	}
 
 	return { id: dayId, date };
 }
 
-/* -------------------- BOT -------------------- */
+/* -------------------- SHOW REQUEST -------------------- */
 
-bot.start(async (ctx) => {
-	const day = await getOrCreateToday();
-
+async function buildRequestText(dayId, date) {
 	const rows = await all(`
-  SELECT di.quantity, i.name, p.name as place
-  FROM day_items di
-  JOIN place_items pi ON di.place_item_id = pi.id
-  JOIN items i ON pi.item_id = i.id
-  JOIN places p ON pi.place_id = p.id
-  WHERE di.day_id = ? AND di.quantity > 0
-  ORDER BY p.id, i.id
-`, [day.id]);
+    SELECT 
+      di.quantity,
+      di.comment,
+      p.name as place,
+      i.name as item
+    FROM day_items di
+    JOIN place_items pi ON di.place_item_id = pi.id
+    JOIN places p ON pi.place_id = p.id
+    JOIN items i ON pi.item_id = i.id
+    WHERE di.day_id = ?
+      AND di.quantity > 0
+    ORDER BY p.id, i.id
+  `, [dayId]);
 
-	let text = `Заявка на ${day.date}\n\n`;
+	let text = `Заявка на ${date}\n\n`;
 	let currentPlace = '';
 
-	rows.forEach(row => {
+	for (const row of rows) {
 		if (row.place !== currentPlace) {
 			currentPlace = row.place;
 			text += `\n${currentPlace}\n`;
 		}
-		text += `• ${row.name} — ${row.quantity}\n`;
-	});
 
+		text += `• ${row.item} — ${row.quantity}`;
+		if (row.comment) {
+			text += ` (${row.comment})`;
+		}
+		text += `\n`;
+	}
+
+	return text;
+}
+
+/* -------------------- BOT -------------------- */
+
+bot.start(async (ctx) => {
+	const day = await getOrCreateToday();
+	const text = await buildRequestText(day.id, day.date);
 	ctx.reply(text);
 });
 
+bot.command('template', async (ctx) => {
+	const places = await all(`SELECT * FROM places ORDER BY id`);
+
+	const buttons = places.map(p =>
+		[Markup.button.callback(p.name, `tpl_place_${p.id}`)]
+	);
+
+	ctx.reply('Оберіть місце для редагування шаблону:', Markup.inlineKeyboard(buttons));
+});
+
+bot.action(/tpl_place_(\d+)/, async (ctx) => {
+	const placeId = ctx.match[1];
+
+	const rows = await all(`
+    SELECT 
+      pi.id,
+      i.name,
+      pi.days_of_week,
+      pi.default_quantity
+    FROM place_items pi
+    JOIN items i ON pi.item_id = i.id
+    WHERE pi.place_id = ?
+    ORDER BY i.id
+  `, [placeId]);
+
+	const buttons = rows.map(r => [
+		Markup.button.callback(
+			`${r.name} | дні: ${r.days_of_week} | к-сть: ${r.default_quantity}`,
+			`tpl_item_${r.id}`
+		)
+	]);
+
+	await ctx.editMessageText(
+		'Оберіть позицію для редагування:',
+		Markup.inlineKeyboard(buttons)
+	);
+});
+
+bot.action(/tpl_item_(\d+)/, async (ctx) => {
+	const placeItemId = ctx.match[1];
+
+	await ctx.editMessageText(
+		'Що змінити?',
+		Markup.inlineKeyboard([
+			[Markup.button.callback('✏️ Дні тижня', `tpl_days_${placeItemId}`)],
+			[Markup.button.callback('🔢 Стартова кількість', `tpl_qty_${placeItemId}`)]
+		])
+	);
+});
+
+bot.action(/tpl_days_(\d+)/, async (ctx) => {
+	const id = ctx.match[1];
+
+	ctx.session = ctx.session || {};
+	ctx.session.editDaysFor = id;
+
+	await ctx.reply('Введи дні тижня у форматі:\n\n1,3,5\n\n(1=Пн ... 7=Нд)');
+});
+
+bot.on('text', async (ctx) => {
+	const text = ctx.message.text.trim();
+
+	// Редагування днів
+	if (ctx.session?.editDaysFor) {
+		const id = ctx.session.editDaysFor;
+
+		await run(`
+      UPDATE place_items
+      SET days_of_week = ?
+      WHERE id = ?
+    `, [text, id]);
+
+		ctx.session.editDaysFor = null;
+		return ctx.reply('✅ Дні оновлено');
+	}
+
+	// Редагування кількості
+	if (ctx.session?.editQtyFor) {
+		const id = ctx.session.editQtyFor;
+		const qty = parseInt(text);
+
+		if (isNaN(qty)) {
+			return ctx.reply('Треба число');
+		}
+
+		await run(`
+      UPDATE place_items
+      SET default_quantity = ?
+      WHERE id = ?
+    `, [qty, id]);
+
+		ctx.session.editQtyFor = null;
+		return ctx.reply('✅ Кількість оновлено');
+	}
+});
+
+bot.action(/tpl_qty_(\d+)/, async (ctx) => {
+	const id = ctx.match[1];
+
+	ctx.session = ctx.session || {};
+	ctx.session.editQtyFor = id;
+
+	await ctx.reply('Введи стартову кількість (число):');
+});
+
+
 /* -------------------- START -------------------- */
 
-(async () => {
-	await seedItems();
-	await seedPlaces();
-	await seedPlaceItems();
-
-	console.log('Seeding done');
-	bot.launch();
-})();
+bot.launch();
+console.log('Bot started');
