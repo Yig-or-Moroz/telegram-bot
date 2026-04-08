@@ -6,6 +6,11 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 
 bot.use(session());
 
+bot.use((ctx, next) => {
+	ctx.session = ctx.session || {};
+	return next();
+});
+
 /* -------------------- HELPERS -------------------- */
 
 function run(sql, params = []) {
@@ -151,8 +156,17 @@ bot.action(/tpl_place_(\d+)/, async (ctx) => {
 		)
 	]);
 
+	// 👇 нові кнопки
+	buttons.push([
+		Markup.button.callback('➕ Додати позицію', `tpl_add_${placeId}`)
+	]);
+
+	buttons.push([
+		Markup.button.callback('❌ Видалити позицію', `tpl_remove_${placeId}`)
+	]);
+
 	await ctx.editMessageText(
-		'Оберіть позицію для редагування:',
+		'Оберіть позицію або дію:',
 		Markup.inlineKeyboard(buttons)
 	);
 });
@@ -180,6 +194,31 @@ bot.action(/tpl_days_(\d+)/, async (ctx) => {
 
 bot.on('text', async (ctx) => {
 	const text = ctx.message.text.trim();
+
+	// Створення нової позиції
+	if (ctx.session?.addNewItemForPlace) {
+		const placeId = ctx.session.addNewItemForPlace;
+		const name = ctx.message.text.trim();
+
+		// 1. додаємо в items
+		await run(`
+    INSERT OR IGNORE INTO items (name)
+    VALUES (?)
+  `, [name]);
+
+		const item = await get(`SELECT id FROM items WHERE name = ?`, [name]);
+
+		// 2. додаємо в шаблон місця
+		await run(`
+    INSERT INTO place_items
+    (place_id, item_id, days_of_week, default_quantity)
+    VALUES (?, ?, '1,2,3,4,5,6,7', 1)
+  `, [placeId, item.id]);
+
+		ctx.session.addNewItemForPlace = null;
+
+		return ctx.reply(`✅ Позицію "${name}" створено і додано в шаблон`);
+	}
 
 	// Редагування днів
 	if (ctx.session?.editDaysFor) {
@@ -224,6 +263,81 @@ bot.action(/tpl_qty_(\d+)/, async (ctx) => {
 	await ctx.reply('Введи стартову кількість (число):');
 });
 
+bot.action(/tpl_add_(\d+)/, async (ctx) => {
+	const placeId = ctx.match[1];
+
+	await ctx.editMessageText(
+		'Як додати позицію?',
+		Markup.inlineKeyboard([
+			[Markup.button.callback('📦 Обрати існуючу', `tpl_add_existing_${placeId}`)],
+			[Markup.button.callback('🆕 Створити нову', `tpl_add_new_${placeId}`)]
+		])
+	);
+});
+
+bot.action(/tpl_add_existing_(\d+)/, async (ctx) => {
+	const placeId = ctx.match[1];
+
+	const items = await all(`SELECT * FROM items ORDER BY name`);
+
+	const buttons = items.map(i => [
+		Markup.button.callback(i.name, `tpl_add_item_${placeId}_${i.id}`)
+	]);
+
+	await ctx.editMessageText(
+		'Оберіть позицію яку додати:',
+		Markup.inlineKeyboard(buttons)
+	);
+});
+
+bot.action(/tpl_add_new_(\d+)/, async (ctx) => {
+	const placeId = ctx.match[1];
+
+	ctx.session.addNewItemForPlace = placeId;
+
+	await ctx.reply('Введи назву нової позиції:');
+});
+
+bot.action(/tpl_add_item_(\d+)_(\d+)/, async (ctx) => {
+	const placeId = ctx.match[1];
+	const itemId = ctx.match[2];
+
+	await run(`
+    INSERT OR IGNORE INTO place_items
+    (place_id, item_id, days_of_week, default_quantity)
+    VALUES (?, ?, '1,2,3,4,5,6,7', 1)
+  `, [placeId, itemId]);
+
+	await ctx.reply('✅ Позицію додано в шаблон');
+});
+
+bot.action(/tpl_remove_(\d+)/, async (ctx) => {
+	const placeId = ctx.match[1];
+
+	const rows = await all(`
+    SELECT pi.id, i.name
+    FROM place_items pi
+    JOIN items i ON pi.item_id = i.id
+    WHERE pi.place_id = ?
+  `, [placeId]);
+
+	const buttons = rows.map(r => [
+		Markup.button.callback(`❌ ${r.name}`, `tpl_remove_item_${r.id}`)
+	]);
+
+	await ctx.editMessageText(
+		'Оберіть позицію для видалення:',
+		Markup.inlineKeyboard(buttons)
+	);
+});
+
+bot.action(/tpl_remove_item_(\d+)/, async (ctx) => {
+	const id = ctx.match[1];
+
+	await run(`DELETE FROM place_items WHERE id = ?`, [id]);
+
+	await ctx.reply('✅ Позицію видалено з шаблону');
+});
 
 /* -------------------- START -------------------- */
 
