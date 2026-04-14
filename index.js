@@ -63,9 +63,12 @@ async function getOrCreateToday() {
 
 	// беремо шаблон з place_items
 	const templates = await all(`
-    SELECT *
-    FROM place_items
-  `);
+	SELECT 
+		pi.*,
+		p.days_of_week
+	FROM place_items pi
+	JOIN places p ON pi.place_id = p.id
+`);
 
 	for (const t of templates) {
 		if (t.days_of_week.includes(dayNumber.toString())) {
@@ -141,10 +144,11 @@ bot.action(/tpl_place_(\d+)/, async (ctx) => {
     SELECT 
       pi.id,
       i.name,
-      pi.days_of_week,
+      p.days_of_week,
       pi.default_quantity
     FROM place_items pi
     JOIN items i ON pi.item_id = i.id
+    JOIN places p ON pi.place_id = p.id
     WHERE pi.place_id = ?
     ORDER BY i.id
   `, [placeId]);
@@ -156,7 +160,6 @@ bot.action(/tpl_place_(\d+)/, async (ctx) => {
 		)
 	]);
 
-	// 👇 нові кнопки
 	buttons.push([
 		Markup.button.callback('➕ Додати позицію', `tpl_add_${placeId}`)
 	]);
@@ -177,19 +180,9 @@ bot.action(/tpl_item_(\d+)/, async (ctx) => {
 	await ctx.editMessageText(
 		'Що змінити?',
 		Markup.inlineKeyboard([
-			[Markup.button.callback('✏️ Дні тижня', `tpl_days_${placeItemId}`)],
 			[Markup.button.callback('🔢 Стартова кількість', `tpl_qty_${placeItemId}`)]
 		])
 	);
-});
-
-bot.action(/tpl_days_(\d+)/, async (ctx) => {
-	const id = ctx.match[1];
-
-	ctx.session = ctx.session || {};
-	ctx.session.editDaysFor = id;
-
-	await ctx.reply('Введи дні тижня у форматі:\n\n1,3,5\n\n(1=Пн ... 7=Нд)');
 });
 
 bot.on('text', async (ctx) => {
@@ -200,38 +193,37 @@ bot.on('text', async (ctx) => {
 		const placeId = ctx.session.addNewItemForPlace;
 		const name = ctx.message.text.trim();
 
-		// 1. додаємо в items
+		// 1. гарантуємо що item існує
 		await run(`
-    INSERT OR IGNORE INTO items (name)
-    VALUES (?)
-  `, [name]);
+		INSERT OR IGNORE INTO items (name)
+		VALUES (?)
+	`, [name]);
 
 		const item = await get(`SELECT id FROM items WHERE name = ?`, [name]);
 
-		// 2. додаємо в шаблон місця
+		// 2. перевіряємо чи вже є в шаблоні цього місця
+		const exists = await get(`
+		SELECT 1 FROM place_items
+		WHERE place_id = ? AND item_id = ?
+	`, [placeId, item.id]);
+		
+		const placesNames = await all(`SELECT * FROM places ORDER BY id`);
+
+		if (exists) {
+			ctx.session.addNewItemForPlace = null;
+			let placeName = placesNames.find(p => p.id == placeId);
+			return ctx.reply(`⚠️ Така позиція вже є в шаблоні ${placeName.name}`);
+		}
+
+		// 3. додаємо в шаблон
 		await run(`
-    INSERT INTO place_items
-    (place_id, item_id, days_of_week, default_quantity)
-    VALUES (?, ?, '1,2,3,4,5,6,7', 1)
-  `, [placeId, item.id]);
+		INSERT INTO place_items
+		(place_id, item_id, default_quantity)
+		VALUES (?, ?, 1)
+	`, [placeId, item.id]);
 
 		ctx.session.addNewItemForPlace = null;
-
-		return ctx.reply(`✅ Позицію "${name}" створено і додано в шаблон`);
-	}
-
-	// Редагування днів
-	if (ctx.session?.editDaysFor) {
-		const id = ctx.session.editDaysFor;
-
-		await run(`
-      UPDATE place_items
-      SET days_of_week = ?
-      WHERE id = ?
-    `, [text, id]);
-
-		ctx.session.editDaysFor = null;
-		return ctx.reply('✅ Дні оновлено');
+		return ctx.reply(`✅ Позицію "${name}" додано в шаблон`);
 	}
 
 	// Редагування кількості
@@ -303,10 +295,10 @@ bot.action(/tpl_add_item_(\d+)_(\d+)/, async (ctx) => {
 	const itemId = ctx.match[2];
 
 	await run(`
-    INSERT OR IGNORE INTO place_items
-    (place_id, item_id, days_of_week, default_quantity)
-    VALUES (?, ?, '1,2,3,4,5,6,7', 1)
-  `, [placeId, itemId]);
+	INSERT OR IGNORE INTO place_items
+	(place_id, item_id, default_quantity)
+	VALUES (?, ?, 1)
+	`, [placeId, itemId]);
 
 	await ctx.reply('✅ Позицію додано в шаблон');
 });

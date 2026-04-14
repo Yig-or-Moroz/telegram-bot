@@ -38,29 +38,35 @@ async function seedDatabase() {
 		await run(`INSERT OR IGNORE INTO items (name) VALUES (?)`, [name]);
 	}
 
+	for (const name of places) {
+		let days;
+
+		if (["Соборна", "Петроцентр", "Вокзал"].includes(name)) {
+			days = "1,3,5";
+		} else if (["Пирогова", "Космо"].includes(name)) {
+			days = "1,2,4,6";
+		} else {
+			days = "1,2,3,4,5,6,7";
+		}
+
+		await run(
+			`INSERT OR IGNORE INTO places (name, days_of_week) VALUES (?, ?)`,
+			[name, days]
+		);
+	}
+
 	const placeRows = await all(`SELECT * FROM places`);
 	const itemRows = await all(`SELECT * FROM items`);
 
-	// Наприклад, assign days_of_week як раніше
 	for (const place of placeRows) {
-		let days;
-
-		if (["Соборна", "Петроцентр", "Вокзал"].includes(place.name)) {
-			days = "1,3,5";
-		} else if (["Пирогова", "Космо"].includes(place.name)) {
-			days = "1,2,4,6";
-		} else {
-			days = "1,2,3,4,5,6,7"; // Доставка
-		}
-
 		for (const item of itemRows) {
 			const default_quantity = place.name === "Доставка" ? 0 : 1;
 
 			await run(`
-      INSERT OR IGNORE INTO place_items
-      (place_id, item_id, days_of_week, default_quantity)
-      VALUES (?, ?, ?, ?)`,
-				[place.id, item.id, days, default_quantity]
+				INSERT OR IGNORE INTO place_items
+				(place_id, item_id, default_quantity)
+				VALUES (?, ?, ?)`,
+				[place.id, item.id, default_quantity]
 			);
 		}
 	}

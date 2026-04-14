@@ -6,7 +6,8 @@ db.serialize(() => {
 	db.run(`
     CREATE TABLE IF NOT EXISTS places (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT UNIQUE NOT NULL
+      name TEXT UNIQUE NOT NULL,
+      days_of_week TEXT NOT NULL
     )
   `);
 
@@ -14,17 +15,16 @@ db.serialize(() => {
 	db.run(`
     CREATE TABLE IF NOT EXISTS items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL
+      name TEXT UNIQUE NOT NULL
     )
   `);
 
 	// Таблиця зв’язку місце ↔ позиція з днями і стартовою кількістю
 	db.run(`
-    CREATE TABLE IF NOT EXISTS place_items (
+      CREATE TABLE IF NOT EXISTS place_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       place_id INTEGER NOT NULL,
       item_id INTEGER NOT NULL,
-      days_of_week TEXT NOT NULL,
       default_quantity INTEGER NOT NULL DEFAULT 1,
       UNIQUE(place_id, item_id),
       FOREIGN KEY(place_id) REFERENCES places(id),
