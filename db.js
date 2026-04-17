@@ -4,54 +4,67 @@ const db = new sqlite3.Database('./database.sqlite');
 db.serialize(() => {
 	// Таблиця місць
 	db.run(`
-    CREATE TABLE IF NOT EXISTS places (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT UNIQUE NOT NULL,
-      days_of_week TEXT NOT NULL
-    )
-  `);
+		CREATE TABLE IF NOT EXISTS places (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT UNIQUE NOT NULL,
+			days_of_week TEXT NOT NULL
+		)
+	`);
 
 	// Таблиця позицій
 	db.run(`
-    CREATE TABLE IF NOT EXISTS items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT UNIQUE NOT NULL
-    )
-  `);
+		CREATE TABLE IF NOT EXISTS items (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT UNIQUE NOT NULL
+		)
+	`);
 
 	// Таблиця зв’язку місце ↔ позиція з днями і стартовою кількістю
 	db.run(`
-      CREATE TABLE IF NOT EXISTS place_items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      place_id INTEGER NOT NULL,
-      item_id INTEGER NOT NULL,
-      default_quantity INTEGER NOT NULL DEFAULT 1,
-      UNIQUE(place_id, item_id),
-      FOREIGN KEY(place_id) REFERENCES places(id),
-      FOREIGN KEY(item_id) REFERENCES items(id)
-    )
-  `);
+			CREATE TABLE IF NOT EXISTS place_items (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			place_id INTEGER NOT NULL,
+			item_id INTEGER NOT NULL,
+			default_quantity INTEGER NOT NULL DEFAULT 1,
+			UNIQUE(place_id, item_id),
+			FOREIGN KEY(place_id) REFERENCES places(id),
+			FOREIGN KEY(item_id) REFERENCES items(id)
+		)
+	`);
 
 	// Таблиця днів
 	db.run(`
-    CREATE TABLE IF NOT EXISTS days (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      date TEXT UNIQUE NOT NULL
-    )
-  `);
+		CREATE TABLE IF NOT EXISTS days (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			date TEXT UNIQUE NOT NULL
+		)
+	`);
 
 	// Таблиця заявки дня
 	db.run(`
-    CREATE TABLE IF NOT EXISTS day_items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      day_id INTEGER NOT NULL,
-      place_item_id INTEGER NOT NULL,
-      quantity INTEGER NOT NULL,
-      comment TEXT,
-      FOREIGN KEY(day_id) REFERENCES days(id),
-      FOREIGN KEY(place_item_id) REFERENCES place_items(id)
-    )
-  `);
+		CREATE TABLE IF NOT EXISTS day_items (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			day_id INTEGER NOT NULL,
+			place_item_id INTEGER NOT NULL,
+			quantity INTEGER NOT NULL,
+			comment TEXT,
+			FOREIGN KEY(day_id) REFERENCES days(id),
+			FOREIGN KEY(place_item_id) REFERENCES place_items(id)
+		)
+	`);
+
+	// Таблиця прогресу виконання TO DO по днях
+	db.run(`
+	CREATE TABLE IF NOT EXISTS day_item_progress (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		day_id INTEGER NOT NULL,
+		item_id INTEGER NOT NULL,
+		remaining INTEGER NOT NULL,
+		UNIQUE(day_id, item_id),
+		FOREIGN KEY(day_id) REFERENCES days(id),
+		FOREIGN KEY(item_id) REFERENCES items(id)
+	)
+`);
 });
 
 module.exports = db;
