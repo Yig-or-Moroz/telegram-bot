@@ -90,6 +90,15 @@ async function syncDayWithTemplate(dayId) {
 	`, [dayId]);
 }
 
+function mainMenu() {
+	return Markup.keyboard([
+		['📄 Переглянути заявку'],
+		['✏️ Редагувати заявку'],
+		['🧩 Редагувати шаблон'],
+		['🗂 Попередні заявки']
+	]).resize();
+}
+
 /* -------------------- CREATE DAY -------------------- */
 
 async function getOrCreateToday() {
@@ -173,14 +182,10 @@ bot.start(async (ctx) => {
 	const day = await getOrCreateToday();
 	const text = await buildRequestText(day.id, day.date);
 
-	await ctx.reply(
-		text,
-		Markup.inlineKeyboard([
-			[Markup.button.callback('✏️ Редагувати заявку', 'edit_request')]
-		])
-	);
+	await ctx.reply(text, mainMenu());
 });
 
+/*
 bot.command('template', async (ctx) => {
 	const places = await all(`SELECT * FROM places ORDER BY id`);
 
@@ -190,7 +195,7 @@ bot.command('template', async (ctx) => {
 
 	ctx.reply('Оберіть місце для редагування шаблону:', Markup.inlineKeyboard(buttons));
 });
-
+*/
 bot.action(/tpl_place_(\d+)/, async (ctx) => {
 	const placeId = ctx.match[1];
 
@@ -239,6 +244,75 @@ bot.action(/tpl_item_(\d+)/, async (ctx) => {
 	);
 });
 
+
+bot.hears('📄 Переглянути заявку', async (ctx) => {
+	const day = await getOrCreateToday();
+	const text = await buildRequestText(day.id, day.date);
+	await ctx.reply(text, mainMenu());
+});
+
+bot.hears('✏️ Редагувати заявку', async (ctx) => {
+	const day = await getOrCreateToday();
+
+	const places = await all(`
+		SELECT DISTINCT p.id, p.name
+		FROM day_items di
+		JOIN place_items pi ON di.place_item_id = pi.id
+		JOIN places p ON pi.place_id = p.id
+		WHERE di.day_id = ?
+		ORDER BY p.id
+	`, [day.id]);
+
+	const buttons = places.map(p => [
+		Markup.button.callback(p.name, `edit_place_${p.id}`)
+	]);
+
+	await ctx.reply(
+		'Оберіть місце:',
+		Markup.inlineKeyboard(buttons)
+	);
+});
+
+bot.hears('🧩 Редагувати шаблон', async (ctx) => {
+	const places = await all(`SELECT * FROM places ORDER BY id`);
+
+	const buttons = places.map(p =>
+		[Markup.button.callback(p.name, `tpl_place_${p.id}`)]
+	);
+
+	await ctx.reply(
+		'Оберіть місце для редагування шаблону:',
+		Markup.inlineKeyboard(buttons)
+	);
+});
+
+bot.hears('🗂 Попередні заявки', async (ctx) => {
+	const days = await all(`
+		SELECT id, date
+		FROM days
+		ORDER BY date DESC
+		LIMIT 10
+	`);
+
+	const buttons = days.map(d => [
+		Markup.button.callback(d.date, `view_day_${d.id}`)
+	]);
+
+	await ctx.reply(
+		'Оберіть дату:',
+		Markup.inlineKeyboard(buttons)
+	);
+});
+
+bot.action(/view_day_(\d+)/, async (ctx) => {
+	const dayId = ctx.match[1];
+	const day = await get(`SELECT * FROM days WHERE id = ?`, [dayId]);
+
+	const text = await buildRequestText(day.id, day.date);
+
+	await ctx.editMessageText(text);
+});
+
 bot.on('text', async (ctx) => {
 	const text = ctx.message.text.trim();
 
@@ -263,7 +337,7 @@ bot.on('text', async (ctx) => {
 
 		if (exists) {
 			ctx.session.addNewItemForPlace = null;
-			return ctx.reply(`⚠️ Така позиція вже є в шаблоні`);
+			return ctx.reply(`⚠️ Така позиція вже є в шаблоні`, mainMenu());
 		}
 
 		// 3. додаємо в шаблон
@@ -274,7 +348,7 @@ bot.on('text', async (ctx) => {
 	`, [placeId, item.id]);
 
 		ctx.session.addNewItemForPlace = null;
-		return ctx.reply(`✅ Позицію "${name}" додано в шаблон`);
+		return ctx.reply(`✅ Позицію "${name}" додано в шаблон`, mainMenu());
 	}
 
 	// Редагування кількості
@@ -293,7 +367,7 @@ bot.on('text', async (ctx) => {
 		`, [qty, id]);
 
 		ctx.session.editQtyFor = null;
-		return ctx.reply('✅ Кількість оновлено');
+		return ctx.reply('✅ Кількість оновлено', mainMenu());
 	}
 
 	if (ctx.session?.editDayQtyFor) {
@@ -309,7 +383,7 @@ bot.on('text', async (ctx) => {
 	`, [qty, id]);
 
 		ctx.session.editDayQtyFor = null;
-		return ctx.reply('✅ Кількість оновлено');
+		return ctx.reply('✅ Кількість оновлено', mainMenu());
 	}
 
 	// редагування коментаря
@@ -324,7 +398,7 @@ bot.on('text', async (ctx) => {
 	`, [text, id]);
 
 		ctx.session.editDayCommentFor = null;
-		return ctx.reply('✅ Коментар оновлено');
+		return ctx.reply('✅ Коментар оновлено', mainMenu());
 	}
 });
 
@@ -382,7 +456,7 @@ bot.action(/tpl_add_item_(\d+)_(\d+)/, async (ctx) => {
 	VALUES (?, ?, 1)
 	`, [placeId, itemId]);
 
-	await ctx.reply('✅ Позицію додано в шаблон');
+	await ctx.reply('✅ Позицію додано в шаблон', mainMenu());
 });
 
 bot.action(/tpl_remove_(\d+)/, async (ctx) => {
@@ -410,13 +484,14 @@ bot.action(/tpl_remove_item_(\d+)/, async (ctx) => {
 
 	await run(`DELETE FROM place_items WHERE id = ?`, [id]);
 
-	await ctx.reply('✅ Позицію видалено з шаблону');
+	await ctx.reply('✅ Позицію видалено з шаблону', mainMenu());
 });
 
 /* -------------- Редагування заявки ---------------- */
 
 // Вибір місця з поточної заявки
 
+/*
 bot.action('edit_request', async (ctx) => {
 	const day = await getOrCreateToday();
 
@@ -432,13 +507,12 @@ bot.action('edit_request', async (ctx) => {
 	const buttons = places.map(p => [
 		Markup.button.callback(p.name, `edit_place_${p.id}`)
 	]);
-
 	await ctx.editMessageText(
 		'Оберіть місце:',
 		Markup.inlineKeyboard(buttons)
 	);
 });
-
+*/
 // Показати позиції саме з day_items
 
 bot.action(/edit_place_(\d+)/, async (ctx) => {
@@ -512,7 +586,7 @@ bot.action(/edit_zero_(\d+)/, async (ctx) => {
 		WHERE id = ?
 	`, [id]);
 
-	await ctx.reply('❌ Позицію прибрано з заявки');
+	await ctx.reply('❌ Позицію прибрано з заявки', mainMenu());
 });
 
 /* -------------------- START -------------------- */
@@ -520,4 +594,3 @@ bot.action(/edit_zero_(\d+)/, async (ctx) => {
 bot.launch();
 console.log('Bot started');
 
-await ctx.reply(`✅ Позицію "${name}" додано в шаблон`);
