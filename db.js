@@ -54,15 +54,15 @@ db.serialize(() => {
 	`);
 
 	// Таблиця прогресу виконання TO DO по днях
+	// Таблиця прогресу виконання TO DO по днях (нова модель через DONE)
 	db.run(`
-	CREATE TABLE IF NOT EXISTS day_item_progress (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		day_id INTEGER NOT NULL,
-		item_id INTEGER NOT NULL,
-		remaining INTEGER NOT NULL,
-		UNIQUE(day_id, item_id),
-		FOREIGN KEY(day_id) REFERENCES days(id),
-		FOREIGN KEY(item_id) REFERENCES items(id)
+		CREATE TABLE IF NOT EXISTS day_item_progress (
+			day_id INTEGER NOT NULL,
+			item_id INTEGER NOT NULL,
+			done INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (day_id, item_id),
+			FOREIGN KEY(day_id) REFERENCES days(id),
+			FOREIGN KEY(item_id) REFERENCES items(id)
 	)
 `);
 });

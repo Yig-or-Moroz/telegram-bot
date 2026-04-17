@@ -81,7 +81,7 @@ async function syncDayWithTemplate(dayId) {
 	}
 
 	// 2. Видаляємо з day_items те, чого вже нема в шаблоні
-	await run(`
+await run(`
 		DELETE FROM day_items
 		WHERE day_id = ?
 		AND place_item_id NOT IN (
@@ -106,15 +106,36 @@ async function getTodayItemTotals(dayId) {
 	`, [dayId]);
 }
 
-async function ensureProgressForToday(dayId) {
-	const totals = await getTodayItemTotals(dayId);
+function buildTodoButtons(rows) {
+	return rows.map(r => {
+		const remaining = r.total - r.done;
 
-	for (const t of totals) {
-		await run(`
-			INSERT OR IGNORE INTO day_item_progress (day_id, item_id, remaining)
-			VALUES (?, ?, ?)
-		`, [dayId, t.item_id, t.total]);
-	}
+		return ([
+			Markup.button.callback('🔙', `todo_plus_${r.item_id}`),
+			Markup.button.callback(
+				`${r.name} — ${remaining > 0 ? remaining : '✅'}`,
+				`todo_minus_${r.item_id}`
+			)
+		]);
+	});
+}
+
+async function getTodoRows(dayId) {
+	return await all(`
+		SELECT 
+			i.id as item_id,
+			i.name,
+			COALESCE(p.done, 0) as done,
+			SUM(di.quantity) as total
+		FROM day_items di
+		JOIN place_items pi ON di.place_item_id = pi.id
+		JOIN items i ON pi.item_id = i.id
+		LEFT JOIN day_item_progress p 
+			ON p.day_id = di.day_id AND p.item_id = i.id
+		WHERE di.day_id = ?
+		GROUP BY i.id
+		ORDER BY i.name
+	`, [dayId]);
 }
 
 function mainMenu() {
@@ -161,6 +182,7 @@ async function getOrCreateToday() {
 
 	if (day) {
 		await syncDayWithTemplate(day.id);
+
 		return day;
 	}
 
@@ -213,17 +235,6 @@ bot.start(async (ctx) => {
 	await ctx.reply(text, mainMenu());
 });
 
-/*
-bot.command('template', async (ctx) => {
-	const places = await all(`SELECT * FROM places ORDER BY id`);
-
-	const buttons = places.map(p =>
-		[Markup.button.callback(p.name, `tpl_place_${p.id}`)]
-	);
-
-	ctx.reply('Оберіть місце для редагування шаблону:', Markup.inlineKeyboard(buttons));
-});
-*/
 bot.action(/tpl_place_(\d+)/, async (ctx) => {
 	const placeId = ctx.match[1];
 
@@ -334,26 +345,8 @@ bot.hears('🗂 Попередні заявки', async (ctx) => {
 
 bot.hears('✅ TO DO на сьогодні', async (ctx) => {
 	const day = await getOrCreateToday();
-
-	await ensureProgressForToday(day.id);
-
-	const rows = await all(`
-		SELECT 
-			p.item_id,
-			i.name,
-			p.remaining
-		FROM day_item_progress p
-		JOIN items i ON p.item_id = i.id
-		WHERE p.day_id = ?
-		ORDER BY i.name
-	`, [day.id]);
-
-	const buttons = rows.map(r => [
-		Markup.button.callback(
-			`${r.name} — ${r.remaining > 0 ? r.remaining : '✅'}`,
-			`todo_${r.item_id}`
-		)
-	]);
+	const rows = await getTodoRows(day.id);
+	const buttons = buildTodoButtons(rows);
 
 	await ctx.reply(
 		'TO DO на сьогодні:',
@@ -361,54 +354,44 @@ bot.hears('✅ TO DO на сьогодні', async (ctx) => {
 	);
 });
 
-bot.action(/todo_(\d+)/, async (ctx) => {
+bot.action(/todo_minus_(\d+)/, async (ctx) => {
 	const itemId = ctx.match[1];
 	const day = await getOrCreateToday();
 
-	// Дивимось поточне значення
-	const row = await get(`
-		SELECT remaining
-		FROM day_item_progress
-		WHERE day_id = ? AND item_id = ?
-	`, [day.id, itemId]);
-
-	// Якщо вже 0 — нічого не робимо
-	if (!row || row.remaining === 0) {
-		return ctx.answerCbQuery('Вже виконано ✅');
-	}
-
-	// Зменшуємо
 	await run(`
-		UPDATE day_item_progress
-		SET remaining = remaining - 1
-		WHERE day_id = ? AND item_id = ?
+		INSERT INTO day_item_progress (day_id, item_id, done)
+		VALUES (?, ?, 1)
+		ON CONFLICT(day_id, item_id)
+		DO UPDATE SET done = done + 1
 	`, [day.id, itemId]);
 
-	await ctx.answerCbQuery('-1');
+	await ctx.answerCbQuery('✔');
 
-	// Перемальовуємо список
-	const rows = await all(`
-		SELECT 
-			p.item_id,
-			i.name,
-			p.remaining
-		FROM day_item_progress p
-		JOIN items i ON p.item_id = i.id
-		WHERE p.day_id = ?
-		ORDER BY i.name
-	`, [day.id]);
-
-	const buttons = rows.map(r => [
-		Markup.button.callback(
-			`${r.name} — ${r.remaining > 0 ? r.remaining : '✅'}`,
-			`todo_${r.item_id}`
-		)
-	]);
-
+	// перерисовка
+	const rows = await getTodoRows(day.id);
 	await ctx.editMessageReplyMarkup(
-		Markup.inlineKeyboard(buttons).reply_markup
+		Markup.inlineKeyboard(buildTodoButtons(rows)).reply_markup
 	);
 });
+
+bot.action(/todo_plus_(\d+)/, async (ctx) => {
+	const itemId = ctx.match[1];
+	const day = await getOrCreateToday();
+
+	await run(`
+		UPDATE day_item_progress
+		SET done = MAX(done - 1, 0)
+		WHERE day_id = ? AND item_id = ?
+	`, [day.id, itemId]);
+
+	await ctx.answerCbQuery('↩');
+
+	const rows = await getTodoRows(day.id);
+	await ctx.editMessageReplyMarkup(
+		Markup.inlineKeyboard(buildTodoButtons(rows)).reply_markup
+	);
+});
+
 
 bot.action(/view_day_(\d+)/, async (ctx) => {
 	const dayId = ctx.match[1];
@@ -487,6 +470,13 @@ bot.on('text', async (ctx) => {
 		SET quantity = ?
 		WHERE id = ?
 	`, [qty, id]);
+
+		// 👇 ДІЗНАЄМОСЬ day_id
+		const row = await get(`
+		SELECT day_id
+		FROM day_items
+		WHERE id = ?
+	`, [id]);
 
 		ctx.session.editDayQtyFor = null;
 		return ctx.reply('✅ Кількість оновлено', mainMenu());
@@ -595,32 +585,6 @@ bot.action(/tpl_remove_item_(\d+)/, async (ctx) => {
 
 /* -------------- Редагування заявки ---------------- */
 
-// Вибір місця з поточної заявки
-
-/*
-bot.action('edit_request', async (ctx) => {
-	const day = await getOrCreateToday();
-
-	const places = await all(`
-		SELECT DISTINCT p.id, p.name
-		FROM day_items di
-		JOIN place_items pi ON di.place_item_id = pi.id
-		JOIN places p ON pi.place_id = p.id
-		WHERE di.day_id = ?
-		ORDER BY p.id
-	`, [day.id]);
-
-	const buttons = places.map(p => [
-		Markup.button.callback(p.name, `edit_place_${p.id}`)
-	]);
-	await ctx.editMessageText(
-		'Оберіть місце:',
-		Markup.inlineKeyboard(buttons)
-	);
-});
-*/
-// Показати позиції саме з day_items
-
 bot.action(/edit_place_(\d+)/, async (ctx) => {
 	const placeId = ctx.match[1];
 	const day = await getOrCreateToday();
@@ -699,3 +663,5 @@ bot.action(/edit_zero_(\d+)/, async (ctx) => {
 
 bot.launch();
 console.log('Bot started');
+
+Оберіть місце
