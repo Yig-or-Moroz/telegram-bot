@@ -21,53 +21,50 @@ function all(sql, params = []) {
 async function seedDatabase() {
 	console.log('Seeding database...');
 
-	const places = ["Соборна", "Пирогова", "Космо", "Петроцентр", "Вокзал", "Доставка"];
+	/* ---------- PLACES ---------- */
+
+	const places = [
+		{ name: "Соборна", days: "1,3,5" },
+		{ name: "Петроцентр", days: "1,3,5" },
+		{ name: "Вокзал", days: "1,3,5" },
+		{ name: "Пирогова", days: "1,2,4,6" },
+		{ name: "Космо", days: "1,2,4,6" },
+		{ name: "Доставка", days: "1,2,3,4,5,6,7" },
+	];
+
+	for (const p of places) {
+		await run(
+			`INSERT INTO places (name, days_of_week) VALUES (?, ?)`,
+			[p.name, p.days]
+		);
+	}
+
+	/* ---------- ITEMS ---------- */
+
 	const items = [
 		"Оксамит", "Тоффі", "Фісташка", "Манго", "Рулет", "Амаретто",
 		"Міні Фісташка", "Міні Тоффі", "Міні Оксамит",
 		"Міні Амаретто", "Міні Свято", "Міні Birthday Cake", "Снікерс"
 	];
 
-	// Додаємо місця
-	for (const name of places) {
-		await run(`INSERT OR IGNORE INTO places (name) VALUES (?)`, [name]);
-	}
-
-	// Додаємо позиції
 	for (const name of items) {
-		await run(`INSERT OR IGNORE INTO items (name) VALUES (?)`, [name]);
+		await run(`INSERT INTO items (name) VALUES (?)`, [name]);
 	}
 
-	for (const name of places) {
-		let days;
-
-		if (["Соборна", "Петроцентр", "Вокзал"].includes(name)) {
-			days = "1,3,5";
-		} else if (["Пирогова", "Космо"].includes(name)) {
-			days = "1,2,4,6";
-		} else {
-			days = "1,2,3,4,5,6,7";
-		}
-
-		await run(
-			`INSERT OR IGNORE INTO places (name, days_of_week) VALUES (?, ?)`,
-			[name, days]
-		);
-	}
+	/* ---------- PLACE_ITEMS (шаблон) ---------- */
 
 	const placeRows = await all(`SELECT * FROM places`);
 	const itemRows = await all(`SELECT * FROM items`);
 
 	for (const place of placeRows) {
 		for (const item of itemRows) {
-			const default_quantity = place.name === "Доставка" ? 0 : 1;
+			const defaultQty = place.name === "Доставка" ? 0 : 1;
 
 			await run(`
-				INSERT OR IGNORE INTO place_items
+				INSERT INTO place_items
 				(place_id, item_id, default_quantity)
-				VALUES (?, ?, ?)`,
-				[place.id, item.id, default_quantity]
-			);
+				VALUES (?, ?, ?)
+			`, [place.id, item.id, defaultQty]);
 		}
 	}
 

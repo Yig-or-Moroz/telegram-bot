@@ -11,6 +11,6 @@ function showTable(name) {
   });
 }
 
-const tables = ['days', 'places', 'items', 'day_items', 'place_items', 'day_item_progress'];
+const tables = ['days', 'places', 'items', 'day_items', 'place_items'];
 
 tables.forEach(showTable);

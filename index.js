@@ -3,7 +3,6 @@ const { Telegraf, Markup, session } = require('telegraf');
 const db = require('./db');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
-
 bot.use(session());
 
 bot.use((ctx, next) => {
@@ -11,715 +10,291 @@ bot.use((ctx, next) => {
 	return next();
 });
 
-/* -------------------- HELPERS -------------------- */
+/* ---------------- DB ---------------- */
 
-function run(sql, params = []) {
-	return new Promise((res, rej) => {
-		db.run(sql, params, function (err) {
-			if (err) rej(err);
-			else res(this);
-		});
-	});
+const run = (sql, p = []) =>
+	new Promise((res, rej) => db.run(sql, p, function (e) { e ? rej(e) : res(this); }));
+
+const get = (sql, p = []) =>
+	new Promise((res, rej) => db.get(sql, p, (e, r) => e ? rej(e) : res(r)));
+
+const all = (sql, p = []) =>
+	new Promise((res, rej) => db.all(sql, p, (e, r) => e ? rej(e) : res(r)));
+
+/* ---------------- DATE LOGIC ---------------- */
+
+function getTargetDateInfo() {
+	const today = new Date();
+	const d = today.getDay();
+
+	let target = new Date(today);
+
+	if (d === 6) target.setDate(today.getDate() + 2); // субота
+	else if (d === 0) target.setDate(today.getDate() + 1); // неділя
+	else target.setDate(today.getDate() + 1);
+
+	const targetDay = target.getDay() === 0 ? 7 : target.getDay();
+	const targetDate = target.toISOString().split('T')[0];
+
+	return { targetDate, targetDay };
 }
 
-function get(sql, params = []) {
-	return new Promise((res, rej) => {
-		db.get(sql, params, (err, row) => {
-			if (err) rej(err);
-			else res(row);
-		});
-	});
+async function getOrCreateTargetDay() {
+	const { targetDate } = getTargetDateInfo();
+	let day = await get(`SELECT * FROM days WHERE date = ?`, [targetDate]);
+	if (day) return day;
+	const r = await run(`INSERT INTO days (date) VALUES (?)`, [targetDate]);
+	return { id: r.lastID, date: targetDate };
 }
 
-function all(sql, params = []) {
-	return new Promise((res, rej) => {
-		db.all(sql, params, (err, rows) => {
-			if (err) rej(err);
-			else res(rows);
-		});
-	});
-}
+/* ---------------- MENU ---------------- */
 
-function getTodayDate() {
-	return new Date().toISOString().split('T')[0];
-}
-
-function getDayNumber() {
-	const d = new Date().getDay();
-	return d === 0 ? 7 : d; // 1-7
-}
-
-function keyboardsEqual(a, b) {
-	return JSON.stringify(a) === JSON.stringify(b);
-}
-
-async function safeEditReplyMarkup(ctx, keyboard) {
-	const newMarkup = { inline_keyboard: keyboard };
-	const oldMarkup = ctx.callbackQuery.message.reply_markup;
-
-	if (!keyboardsEqual(oldMarkup, newMarkup)) {
-		await ctx.editMessageReplyMarkup(newMarkup);
-	}
-}
-
-async function syncToday() {
-	const day = await getOrCreateToday();
-	await syncDayWithTemplate(day.id);
-}
-
-async function syncDayWithTemplate(dayId) {
-	const dayNumber = getDayNumber();
-
-	// 1. Всі шаблонні позиції, які МАЮТЬ бути сьогодні
-	const templates = await all(`
-		SELECT 
-			pi.id as place_item_id,
-			pi.default_quantity,
-			p.days_of_week
-		FROM place_items pi
-		JOIN places p ON pi.place_id = p.id
-	`);
-
-	for (const t of templates) {
-		if (!t.days_of_week.includes(dayNumber.toString())) continue;
-
-		// чи вже є в day_items
-		const exists = await get(`
-			SELECT 1 FROM day_items
-			WHERE day_id = ? AND place_item_id = ?
-		`, [dayId, t.place_item_id]);
-
-		// якщо нема — додаємо
-		if (!exists) {
-			await run(`
-				INSERT INTO day_items (day_id, place_item_id, quantity, comment)
-				VALUES (?, ?, ?, '')
-			`, [dayId, t.place_item_id, t.default_quantity]);
-		}
-	}
-
-	// 2. Видаляємо з day_items те, чого вже нема в шаблоні
-	/*	await run(`
-			DELETE FROM day_items
-			WHERE day_id = ?
-			AND place_item_id NOT IN (
-				SELECT id FROM place_items
-			)
-		`, [dayId]);*/
-
-	await run(`
-			DELETE FROM day_item_progress
-			WHERE day_id = ?
-			AND item_id NOT IN (
-				SELECT DISTINCT i.id
-				FROM day_items di
-				JOIN place_items pi ON di.place_item_id = pi.id
-				JOIN items i ON pi.item_id = i.id
-				WHERE di.day_id = ?
-			)
-		`, [dayId, dayId]);
-}
-
-async function getTodayItemTotals(dayId) {
-	return await all(`
-		SELECT 
-			i.id as item_id,
-			i.name,
-			SUM(di.quantity) as total
-		FROM day_items di
-		JOIN place_items pi ON di.place_item_id = pi.id
-		JOIN items i ON pi.item_id = i.id
-		WHERE di.day_id = ?
-			AND di.quantity > 0
-		GROUP BY i.id
-		ORDER BY i.name
-	`, [dayId]);
-}
-
-function buildTodoButtons(rows) {
-	return rows.map(r => {
-		const remaining = r.total - r.done;
-
-		return ([
-			Markup.button.callback('🔙', `todo_plus_${r.item_id}`),
-			Markup.button.callback(
-				`${r.name} — ${remaining > 0 ? remaining : '✅'}`,
-				`todo_minus_${r.item_id}`
-			)
-		]);
-	});
-}
-
-async function getTodoRows(dayId) {
-	return await all(`
-		SELECT 
-			i.id as item_id,
-			i.name,
-			COALESCE(p.done, 0) as done,
-			SUM(di.quantity) as total
-		FROM day_items di
-		JOIN place_items pi ON di.place_item_id = pi.id
-		JOIN items i ON pi.item_id = i.id
-		LEFT JOIN day_item_progress p 
-			ON p.day_id = di.day_id AND p.item_id = i.id
-		WHERE di.day_id = ?
-			AND di.quantity > 0
-		GROUP BY i.id
-		HAVING total > 0
-		ORDER BY i.name
-	`, [dayId]);
-}
-
-function mainMenu() {
-	return Markup.keyboard([
-		['✅ TO DO на сьогодні'],
+const mainMenu = () =>
+	Markup.keyboard([
 		['📄 Переглянути заявку'],
 		['✏️ Редагувати заявку'],
-		['🧩 Редагувати шаблон'],
 		['🗂 Попередні заявки']
 	]).resize();
-}
 
-/* -------------------- CREATE DAY -------------------- */
+/* ---------------- DIFF ENGINE ---------------- */
 
-async function getOrCreateToday() {
-	const date = getTodayDate();
-	const dayNumber = getDayNumber();
+async function getFinalItemsForPlace(dayId, placeId) {
+	const base = await all(`
+		SELECT i.id item_id, i.name, pi.default_quantity
+		FROM place_items pi
+		JOIN items i ON i.id = pi.item_id
+		WHERE pi.place_id = ?
+	`, [placeId]);
 
-	let day = await get(`SELECT * FROM days WHERE date = ?`, [date]);
-	if (day) return day;
+	const diffs = await all(`
+		SELECT * FROM day_items
+		WHERE day_id = ? 
+		  AND place_id = ?
+		  AND is_custom = 0   -- ❗ КЛЮЧОВЕ
+	`, [dayId, placeId]);
 
-	const result = await run(`INSERT INTO days (date) VALUES (?)`, [date]);
-	const dayId = result.lastID;
+	const result = [];
 
-	// беремо шаблон з place_items
-	const templates = await all(`
-	SELECT 
-		pi.*,
-		p.days_of_week
-	FROM place_items pi
-	JOIN places p ON pi.place_id = p.id
-`);
+	for (const item of base) {
+		let qty = item.default_quantity;
 
-	for (const t of templates) {
-		if (t.days_of_week.includes(dayNumber.toString())) {
-			await run(`
-			INSERT INTO day_items (day_id, place_item_id, quantity, comment)
-			VALUES (?, ?, ?, '')
-      `, [dayId, t.id, t.default_quantity]);
+		const relatedDiffs = diffs.filter(d => d.item_id === item.item_id);
+
+		for (const d of relatedDiffs) {
+			if (d.action === 'set') {
+				qty = d.quantity;
+			}
+			if (d.action === 'add') {
+				qty += d.quantity;
+			}
+		}
+
+		if (qty > 0) {
+			result.push({
+				item_id: item.item_id,
+				name: item.name,
+				qty
+			});
 		}
 	}
 
-	await syncDayWithTemplate(dayId);
-
-	if (day) {
-		await syncDayWithTemplate(day.id);
-
-		return day;
-	}
-
-	return { id: dayId, date };
+	return result;
 }
 
-/* -------------------- SHOW REQUEST -------------------- */
+/* ---------------- VIEW TEXT ---------------- */
 
 async function buildRequestText(dayId, date) {
-	const rows = await all(`
-		SELECT 
-			di.quantity,
-			di.comment,
-			p.name as place,
-			i.name as item
-		FROM day_items di
-		JOIN place_items pi ON di.place_item_id = pi.id
-		JOIN places p ON pi.place_id = p.id
-		JOIN items i ON pi.item_id = i.id
-		WHERE di.day_id = ?
-			AND di.quantity > 0
-		ORDER BY p.id, i.id
-	`, [dayId]);
+	const jsDay = new Date(date).getDay();
+	const dbDay = jsDay === 0 ? 7 : jsDay;
 
-	let text = `Заявка на ${date}\n\n`;
-	let currentPlace = '';
+	const places = await all(`
+		SELECT id, name
+		FROM places
+		WHERE instr(',' || days_of_week || ',', ',' || ? || ',') > 0
+		ORDER BY id
+	`, [dbDay]);
 
-	for (const row of rows) {
-		if (row.place !== currentPlace) {
-			currentPlace = row.place;
-			text += `\n${currentPlace}\n`;
+	let text = `Заявка на ${date}\n`;
+
+	for (const place of places) {
+		const items = await getFinalItemsForPlace(dayId, place.id);
+
+		const customs = await all(`
+			SELECT di.quantity, di.comment, i.name
+			FROM day_items di
+			JOIN items i ON i.id = di.item_id
+			WHERE di.day_id = ?
+			AND di.place_id = ?
+			AND di.is_custom = 1
+		`, [dayId, place.id]);
+
+		if (items.length === 0 && customs.length === 0) continue;
+
+		text += `\n\n${place.name}\n`;
+
+		for (const i of items) {
+			text += `• ${i.name} — ${i.qty}\n`;
 		}
 
-		text += `• ${row.item} — ${row.quantity}`;
-		if (row.comment) {
-			text += ` (${row.comment})`;
+		if (customs.length) {
+			text += `______________\n`;
+			text += `Заказні\n`;
+			for (const c of customs) {
+				text += `• ${c.name} — ${c.quantity}`;
+				if (c.comment) text += ` (${c.comment})`;
+				text += '\n';
+			}
 		}
-		text += `\n`;
 	}
 
 	return text;
 }
 
-/* -------------------- BOT -------------------- */
+/* ---------------- START / VIEW ---------------- */
 
 bot.start(async (ctx) => {
-	const day = await getOrCreateToday();
-	const text = await buildRequestText(day.id, day.date);
-
-	await ctx.reply(text, mainMenu());
+	const day = await getOrCreateTargetDay();
+	ctx.reply(await buildRequestText(day.id, day.date), mainMenu());
 });
 
-bot.action(/tpl_place_(\d+)/, async (ctx) => {
-	const placeId = ctx.match[1];
+bot.hears('📄 Переглянути заявку', async (ctx) => {
+	const day = await getOrCreateTargetDay();
+	ctx.reply(await buildRequestText(day.id, day.date), mainMenu());
+});
 
-	const rows = await all(`
-		SELECT 
-			pi.id,
-			i.name,
-			p.days_of_week,
-			pi.default_quantity
-		FROM place_items pi
-		JOIN items i ON pi.item_id = i.id
-		JOIN places p ON pi.place_id = p.id
-		WHERE pi.place_id = ?
-		ORDER BY i.id
-	`, [placeId]);
+/* ---------------- EDIT FLOW ---------------- */
 
-	const buttons = rows.map(r => [
-		Markup.button.callback(
-			`${r.name} | дні: ${r.days_of_week} | к-сть: ${r.default_quantity}`,
-			`tpl_item_${r.id}`
+bot.hears('✏️ Редагувати заявку', async (ctx) => {
+	const places = await all(`SELECT id, name FROM places ORDER BY id`);
+	ctx.reply(
+		'Оберіть заклад:',
+		Markup.inlineKeyboard(
+			places.map(p => [Markup.button.callback(p.name, `edit_place_${p.id}`)])
 		)
-	]);
-
-	buttons.push([
-		Markup.button.callback('➕ Додати позицію', `tpl_add_${placeId}`)
-	]);
-
-	buttons.push([
-		Markup.button.callback('❌ Видалити позицію', `tpl_remove_${placeId}`)
-	]);
-
-	await ctx.editMessageText(
-		'Оберіть позицію або дію:',
-		Markup.inlineKeyboard(buttons)
 	);
 });
 
-bot.action(/tpl_item_(\d+)/, async (ctx) => {
-	const placeItemId = ctx.match[1];
-
-	await ctx.editMessageText(
-		'Що змінити?',
+bot.action(/edit_place_(\d+)/, async (ctx) => {
+	const id = ctx.match[1];
+	ctx.editMessageText(
+		'Що зробити?',
 		Markup.inlineKeyboard([
-			[Markup.button.callback('🔢 Стартова кількість', `tpl_qty_${placeItemId}`)]
+			[Markup.button.callback('🔢 Змінити кількість', `edit_qty_menu_${id}`)],
+			[Markup.button.callback('🧁 Додати заказний', `add_custom_${id}`)]
 		])
 	);
 });
 
+/* ----- CHANGE QTY ----- */
 
-bot.hears('📄 Переглянути заявку', async (ctx) => {
-	const day = await getOrCreateToday();
-	const text = await buildRequestText(day.id, day.date);
-	await ctx.reply(text, mainMenu());
-});
+bot.action(/edit_qty_menu_(\d+)/, async (ctx) => {
+	const placeId = ctx.match[1];
+	const day = await getOrCreateTargetDay();
+	const items = await getFinalItemsForPlace(day.id, placeId);
 
-bot.hears('✏️ Редагувати заявку', async (ctx) => {
-	const day = await getOrCreateToday();
-
-	const places = await all(`
-		SELECT DISTINCT p.id, p.name
-		FROM day_items di
-		JOIN place_items pi ON di.place_item_id = pi.id
-		JOIN places p ON pi.place_id = p.id
-		WHERE di.day_id = ?
-		ORDER BY p.id
-	`, [day.id]);
-
-	const buttons = places.map(p => [
-		Markup.button.callback(p.name, `edit_place_${p.id}`)
-	]);
-
-	await ctx.reply(
-		"Оберіть O'cake:",
-		Markup.inlineKeyboard(buttons)
+	ctx.editMessageText(
+		'Оберіть позицію:',
+		Markup.inlineKeyboard(
+			items.map(i => [
+				Markup.button.callback(`${i.name} — ${i.qty}`, `edit_qty_${placeId}_${i.item_id}`)
+			])
+		)
 	);
 });
 
-bot.hears('🧩 Редагувати шаблон', async (ctx) => {
-	const places = await all(`SELECT * FROM places ORDER BY id`);
+bot.action(/edit_qty_(\d+)_(\d+)/, async (ctx) => {
+	ctx.session.state = 'editQty';
+	ctx.session.placeId = ctx.match[1];
+	ctx.session.itemId = ctx.match[2];
 
-	const buttons = places.map(p =>
-		[Markup.button.callback(p.name, `tpl_place_${p.id}`)]
-	);
-
-	await ctx.reply(
-		"Оберіть O'cake для редагування шаблону:",
-		Markup.inlineKeyboard(buttons)
-	);
+	await ctx.reply('Введіть нову кількість:');
 });
 
-bot.hears('🗂 Попередні заявки', async (ctx) => {
-	const days = await all(`
-		SELECT id, date
-		FROM days
-		ORDER BY date DESC
-		LIMIT 10
-	`);
+/* ----- CUSTOM ITEM ----- */
 
-	const buttons = days.map(d => [
-		Markup.button.callback(d.date, `view_day_${d.id}`)
-	]);
+bot.action(/add_custom_(\d+)/, async (ctx) => {
+	const placeId = ctx.match[1];
+	const day = await getOrCreateTargetDay();
+	const items = await getFinalItemsForPlace(day.id, placeId);
 
-	await ctx.reply(
-		'Оберіть дату:',
-		Markup.inlineKeyboard(buttons)
+	ctx.editMessageText(
+		'Оберіть позицію для заказного:',
+		Markup.inlineKeyboard(
+			items.map(i => [
+				Markup.button.callback(
+					i.name,
+					`custom_pick_${placeId}_${i.item_id}`
+				)
+			])
+		)
 	);
 });
 
-bot.hears('✅ TO DO на сьогодні', async (ctx) => {
-	const day = await getOrCreateToday();
-	const rows = await getTodoRows(day.id);
-	const buttons = buildTodoButtons(rows);
+bot.action(/custom_pick_(\d+)_(\d+)/, async (ctx) => {
+	ctx.session.state = 'customComment';
+	ctx.session.placeId = ctx.match[1];
+	ctx.session.itemId = ctx.match[2];
 
-	await ctx.reply(
-		'Тортики які потрібно зробити на сьогодні:',
-		Markup.inlineKeyboard(buttons)
-	);
-});
-
-bot.action(/todo_minus_(\d+)/, async (ctx) => {
-	const itemId = ctx.match[1];
-	const day = await getOrCreateToday();
-
-	// беремо актуальні дані
-	const rows = await getTodoRows(day.id);
-	const row = rows.find(r => r.item_id == itemId);
-
-	if (!row) return ctx.answerCbQuery();
-
-	const remaining = row.total - row.done;
-
-	// якщо вже все зроблено — нічого не робимо
-	if (remaining <= 0) {
-		return ctx.answerCbQuery('Вже виконано ✅');
-	}
-
-	await run(`
-		INSERT INTO day_item_progress (day_id, item_id, done)
-		VALUES (?, ?, 1)
-		ON CONFLICT(day_id, item_id)
-		DO UPDATE SET done = done + 1
-	`, [day.id, itemId]);
-
-	await ctx.answerCbQuery('✔');
-
-	const newRows = await getTodoRows(day.id);
-	await safeEditReplyMarkup(ctx, buildTodoButtons(newRows));
-});
-
-bot.action(/todo_plus_(\d+)/, async (ctx) => {
-	const itemId = ctx.match[1];
-	const day = await getOrCreateToday();
-
-	// дивимось поточний done
-	const row = await get(`
-		SELECT done
-		FROM day_item_progress
-		WHERE day_id = ? AND item_id = ?
-	`, [day.id, itemId]);
-
-	// якщо нема рядка або done = 0 — НІЧОГО НЕ РОБИМО
-	if (!row || row.done === 0) {
-		return ctx.answerCbQuery('Нема що повертати');
-	}
-
-	// тільки якщо реально є що міняти
-	await run(`
-		UPDATE day_item_progress
-		SET done = done - 1
-		WHERE day_id = ? AND item_id = ?
-	`, [day.id, itemId]);
-
-	await ctx.answerCbQuery('↩');
-
-	const rows = await getTodoRows(day.id);
-	await safeEditReplyMarkup(ctx, buildTodoButtons(rows));
-});
-
-
-bot.action(/view_day_(\d+)/, async (ctx) => {
-	const dayId = ctx.match[1];
-	const day = await get(`SELECT * FROM days WHERE id = ?`, [dayId]);
-
-	const text = await buildRequestText(day.id, day.date);
-
-	await ctx.editMessageText(text);
+	await ctx.reply('Введіть коментар (або "ні"):');
 });
 
 bot.on('text', async (ctx) => {
+	const state = ctx.session.state;
+	if (!state) return;
+
 	const text = ctx.message.text.trim();
+	const day = await getOrCreateTargetDay();
 
-	// Створення нової позиції
-	if (ctx.session?.addNewItemForPlace) {
-		const placeId = ctx.session.addNewItemForPlace;
-		const name = ctx.message.text.trim();
+	/* ---------- EDIT QTY ---------- */
+	if (state === 'editQty') {
+		const { placeId, itemId } = ctx.session;
 
-		// 1. гарантуємо що item існує
-		await run(`
-		INSERT OR IGNORE INTO items (name)
-		VALUES (?)
-	`, [name]);
-
-		const item = await get(`SELECT id FROM items WHERE name = ?`, [name]);
-
-		// 2. перевіряємо чи вже є в шаблоні цього місця
-		const exists = await get(`
-		SELECT 1 FROM place_items
-		WHERE place_id = ? AND item_id = ?
-	`, [placeId, item.id]);
-
-		if (exists) {
-			ctx.session.addNewItemForPlace = null;
-			return ctx.reply(`⚠️ Така позиція вже є в шаблоні`, mainMenu());
-		}
-
-		// 3. додаємо в шаблон
-		await run(`
-		INSERT INTO place_items
-		(place_id, item_id, default_quantity)
-		VALUES (?, ?, 1)
-	`, [placeId, item.id]);
-
-		await syncToday();
-
-		ctx.session.addNewItemForPlace = null;
-		return ctx.reply(`✅ Позицію "${name}" додано в шаблон`, mainMenu());
-	}
-
-	// Редагування кількості
-	if (ctx.session?.editQtyFor) {
-		const id = ctx.session.editQtyFor;
 		const qty = parseInt(text);
-
-		if (isNaN(qty)) {
-			return ctx.reply('Треба число');
-		}
+		if (isNaN(qty)) return ctx.reply('Потрібно число');
 
 		await run(`
-      UPDATE place_items
-      SET default_quantity = ?
-      WHERE id = ?
-		`, [qty, id]);
+			INSERT INTO day_items (day_id, place_id, item_id, action, quantity)
+			VALUES (?, ?, ?, 'set', ?)
+		`, [day.id, placeId, itemId, qty]);
 
-		ctx.session.editQtyFor = null;
-		return ctx.reply('✅ Кількість оновлено', mainMenu());
+		ctx.session.state = null;
+		return ctx.reply('✅ Оновлено', mainMenu());
 	}
 
-	if (ctx.session?.editDayQtyFor) {
-		const id = ctx.session.editDayQtyFor;
-		const qty = parseInt(text);
+	/* ---------- CUSTOM COMMENT ---------- */
+	if (state === 'customComment') {
+		const { placeId, itemId } = ctx.session;
 
-		if (isNaN(qty)) return ctx.reply('Треба число');
-
-		await run(`
-		UPDATE day_items
-		SET quantity = ?
-		WHERE id = ?
-	`, [qty, id]);
-
-		// 👇 ДІЗНАЄМОСЬ day_id
-		const row = await get(`
-		SELECT day_id
-		FROM day_items
-		WHERE id = ?
-	`, [id]);
-
-		ctx.session.editDayQtyFor = null;
-		return ctx.reply('✅ Кількість оновлено', mainMenu());
-	}
-
-	// редагування коментаря
-
-	if (ctx.session?.editDayCommentFor) {
-		const id = ctx.session.editDayCommentFor;
+		const comment = (text.toLowerCase() === 'ні' || text === '') ? '' : text;
 
 		await run(`
-		UPDATE day_items
-		SET comment = ?
-		WHERE id = ?
-	`, [text, id]);
+			INSERT INTO day_items
+			(day_id, place_id, item_id, action, quantity, comment, is_custom)
+			VALUES (?, ?, ?, 'add', 1, ?, 1)
+		`, [day.id, placeId, itemId, comment]);
 
-		ctx.session.editDayCommentFor = null;
-		return ctx.reply('✅ Коментар оновлено', mainMenu());
+		ctx.session.state = null;
+		return ctx.reply('✅ Заказний додано', mainMenu());
 	}
 });
 
-bot.action(/tpl_qty_(\d+)/, async (ctx) => {
-	const id = ctx.match[1];
+/* ---------------- HISTORY ---------------- */
 
-	ctx.session = ctx.session || {};
-	ctx.session.editQtyFor = id;
-
-	await ctx.reply('Введи стартову кількість (число):');
-});
-
-bot.action(/tpl_add_(\d+)/, async (ctx) => {
-	const placeId = ctx.match[1];
-
-	await ctx.editMessageText(
-		'Як додати позицію?',
-		Markup.inlineKeyboard([
-			[Markup.button.callback('📦 Обрати існуючу', `tpl_add_existing_${placeId}`)],
-			[Markup.button.callback('🆕 Створити нову', `tpl_add_new_${placeId}`)]
-		])
+bot.hears('🗂 Попередні заявки', async (ctx) => {
+	const days = await all(`SELECT * FROM days ORDER BY date DESC LIMIT 10`);
+	ctx.reply(
+		'Оберіть дату:',
+		Markup.inlineKeyboard(days.map(d => [Markup.button.callback(d.date, `view_day_${d.id}`)]))
 	);
 });
 
-bot.action(/tpl_add_existing_(\d+)/, async (ctx) => {
-	const placeId = ctx.match[1];
-
-	const items = await all(`SELECT * FROM items ORDER BY name`);
-
-	const buttons = items.map(i => [
-		Markup.button.callback(i.name, `tpl_add_item_${placeId}_${i.id}`)
-	]);
-
-	await ctx.editMessageText(
-		'Оберіть позицію яку додати:',
-		Markup.inlineKeyboard(buttons)
-	);
+bot.action(/view_day_(\d+)/, async (ctx) => {
+	const day = await get(`SELECT * FROM days WHERE id = ?`, [ctx.match[1]]);
+	ctx.editMessageText(await buildRequestText(day.id, day.date));
 });
 
-bot.action(/tpl_add_new_(\d+)/, async (ctx) => {
-	const placeId = ctx.match[1];
-
-	ctx.session.addNewItemForPlace = placeId;
-
-	await ctx.reply('Введи назву нової позиції:');
-});
-
-
-bot.action(/tpl_add_item_(\d+)_(\d+)/, async (ctx) => {
-	const placeId = ctx.match[1];
-	const itemId = ctx.match[2];
-
-	await run(`
-	INSERT OR IGNORE INTO place_items
-	(place_id, item_id, default_quantity)
-	VALUES (?, ?, 1)
-	`, [placeId, itemId]);
-
-	await syncToday();
-
-	await ctx.reply('✅ Позицію додано в шаблон', mainMenu());
-});
-
-bot.action(/tpl_remove_(\d+)/, async (ctx) => {
-	const placeId = ctx.match[1];
-
-	const rows = await all(`
-		SELECT pi.id, i.name
-		FROM place_items pi
-		JOIN items i ON pi.item_id = i.id
-		WHERE pi.place_id = ?
-	`, [placeId]);
-
-	const buttons = rows.map(r => [
-		Markup.button.callback(`❌ ${r.name}`, `tpl_remove_item_${r.id}`)
-	]);
-
-	await ctx.editMessageText(
-		'Оберіть позицію для видалення:',
-		Markup.inlineKeyboard(buttons)
-	);
-});
-
-bot.action(/tpl_remove_item_(\d+)/, async (ctx) => {
-	const id = ctx.match[1];
-
-	await run(`DELETE FROM place_items WHERE id = ?`, [id]);
-
-	await syncToday();
-
-	await ctx.reply('✅ Позицію видалено з шаблону', mainMenu());
-});
-
-/* -------------- Редагування заявки ---------------- */
-
-bot.action(/edit_place_(\d+)/, async (ctx) => {
-	const placeId = ctx.match[1];
-	const day = await getOrCreateToday();
-
-	const rows = await all(`
-		SELECT 
-			di.id as day_item_id,
-			i.name,
-			di.quantity,
-			di.comment
-		FROM day_items di
-		JOIN place_items pi ON di.place_item_id = pi.id
-		JOIN items i ON pi.item_id = i.id
-		WHERE di.day_id = ?
-		AND pi.place_id = ?
-		ORDER BY i.id
-	`, [day.id, placeId]);
-
-	const buttons = rows.map(r => [
-		Markup.button.callback(
-			`${r.name} — ${r.quantity}${r.comment ? ' (' + r.comment + ')' : ''}`,
-			`edit_item_${r.day_item_id}`
-		)
-	]);
-
-	await ctx.editMessageText(
-		'Оберіть позицію:',
-		Markup.inlineKeyboard(buttons)
-	);
-});
-
-// Меню редагування позиції
-
-bot.action(/edit_item_(\d+)/, async (ctx) => {
-	const id = ctx.match[1];
-
-	await ctx.editMessageText(
-		'Що змінити?',
-		Markup.inlineKeyboard([
-			[Markup.button.callback('🔢 Кількість', `edit_qty_${id}`)],
-			[Markup.button.callback('💬 Коментар', `edit_comment_${id}`)],
-			[Markup.button.callback('❌ Прибрати з заявки', `edit_zero_${id}`)]
-		])
-	);
-});
-
-// Редагування кількості
-
-bot.action(/edit_qty_(\d+)/, async (ctx) => {
-	ctx.session.editDayQtyFor = ctx.match[1];
-	await ctx.reply('Введи нову кількість:');
-});
-
-// Редагування коментаря
-
-bot.action(/edit_comment_(\d+)/, async (ctx) => {
-	ctx.session.editDayCommentFor = ctx.match[1];
-	await ctx.reply('Введи коментар:');
-});
-
-// Прибрати позицію
-
-bot.action(/edit_zero_(\d+)/, async (ctx) => {
-	const id = ctx.match[1];
-
-	await run(`
-		UPDATE day_items
-		SET quantity = 0
-		WHERE id = ?
-	`, [id]);
-
-	await ctx.reply('❌ Позицію прибрано з заявки', mainMenu());
-});
-
-/* -------------------- START -------------------- */
+/* ---------------- START ---------------- */
 
 bot.launch();
 console.log('Bot started');
+

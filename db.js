@@ -21,7 +21,7 @@ db.serialize(() => {
 
 	// Таблиця зв’язку місце ↔ позиція з днями і стартовою кількістю
 	db.run(`
-			CREATE TABLE IF NOT EXISTS place_items (
+		CREATE TABLE IF NOT EXISTS place_items (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			place_id INTEGER NOT NULL,
 			item_id INTEGER NOT NULL,
@@ -45,26 +45,20 @@ db.serialize(() => {
 		CREATE TABLE IF NOT EXISTS day_items (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			day_id INTEGER NOT NULL,
-			place_item_id INTEGER NOT NULL,
-			quantity INTEGER NOT NULL,
+			place_id INTEGER NOT NULL,
+			item_id INTEGER NOT NULL,
+
+			action TEXT NOT NULL, 
+			-- 'set' | 'add' | 'remove'
+
+			quantity INTEGER, 
 			comment TEXT,
-			FOREIGN KEY(day_id) REFERENCES days(id),
-			FOREIGN KEY(place_item_id) REFERENCES place_items(id)
-		)
+
+			is_custom INTEGER DEFAULT 0
+		);
 	`);
 
-	// Таблиця прогресу виконання TO DO по днях
-	// Таблиця прогресу виконання TO DO по днях (нова модель через DONE)
-	db.run(`
-		CREATE TABLE IF NOT EXISTS day_item_progress (
-			day_id INTEGER NOT NULL,
-			item_id INTEGER NOT NULL,
-			done INTEGER NOT NULL DEFAULT 0,
-			PRIMARY KEY (day_id, item_id),
-			FOREIGN KEY(day_id) REFERENCES days(id),
-			FOREIGN KEY(item_id) REFERENCES items(id)
-	)
-`);
 });
 
 module.exports = db;
+
