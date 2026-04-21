@@ -237,12 +237,32 @@ bot.action(/^edit_place_(\d+)?/, async (ctx) => {
 	}
 
 	// звичайна логіка для інших
+	// звичайна логіка для інших
+	const day = await getOrCreateTargetDay();
+
+	const hasCustoms = await get(`
+		SELECT 1
+		FROM day_items
+		WHERE day_id = ?
+		AND place_id = ?
+		AND is_custom = 1
+		LIMIT 1
+`, [day.id, placeId]);
+
+	const buttons = [
+		[Markup.button.callback('🔢 Змінити кількість', `edit_qty_menu_${placeId}`)],
+		[Markup.button.callback('🧁 Додати заказний', `add_custom_${placeId}`)]
+	];
+
+	if (hasCustoms) {
+		buttons.push([
+			Markup.button.callback('❌ Видалити заказний', `remove_custom_${placeId}`)
+		]);
+	}
+
 	ctx.editMessageText(
 		'Що зробити?',
-		Markup.inlineKeyboard([
-			[Markup.button.callback('🔢 Змінити кількість', `edit_qty_menu_${placeId}`)],
-			[Markup.button.callback('🧁 Додати заказний', `add_custom_${placeId}`)]
-		])
+		Markup.inlineKeyboard(buttons)
 	);
 });
 
@@ -291,6 +311,51 @@ bot.action(/^add_custom_(\d+)?/, async (ctx) => {
 			])
 		)
 	);
+});
+
+bot.action(/^remove_custom_(\d+)$/, async (ctx) => {
+	await ctx.answerCbQuery();
+
+	const placeId = ctx.match[1];
+	const day = await getOrCreateTargetDay();
+
+	const customs = await all(`
+		SELECT di.id, di.comment, i.name
+		FROM day_items di
+		JOIN items i ON i.id = di.item_id
+		WHERE di.day_id = ?
+		  AND di.place_id = ?
+		  AND di.is_custom = 1
+	`, [day.id, placeId]);
+
+	if (!customs.length) {
+		return ctx.editMessageText('Немає заказних для видалення');
+	}
+
+	ctx.editMessageText(
+		'Оберіть заказний для видалення:',
+		Markup.inlineKeyboard(
+			customs.map(c => [
+				Markup.button.callback(
+					`${c.name}${c.comment ? ' (' + c.comment + ')' : ''}`,
+					`confirm_remove_custom_${c.id}`
+				)
+			])
+		)
+	);
+});
+
+bot.action(/^confirm_remove_custom_(\d+)$/, async (ctx) => {
+	await ctx.answerCbQuery();
+
+	const id = ctx.match[1];
+
+	await run(`
+		DELETE FROM day_items
+		WHERE id = ?
+	`, [id]);
+
+	ctx.editMessageText('✅ Заказний видалено');
 });
 
 bot.action(/^custom_pick_(\d+)_(\d+)?/, async (ctx) => {
@@ -671,10 +736,3 @@ bot.on('text', async (ctx) => {
 
 bot.launch();
 console.log('Bot started');
-
-
-Добре.
-Тепер я хочу повернутись до редагування заявки.
-Я хочу зробити видалення "Заказних".
-Логіка: 
-- тицяю "Редагувати заявку" -> Обераю заклад -> в нає меню з двох кнопок: 1) Змінити кількість 2) Додати заказний. Тепер якщо в заявці цього закладу вже є хоча б одна заказна позиція добавляємо третю кнопку 3) Видалити заказний. При натисканні на кнопку  "Видалити заказний" -> з'являється список усіх заказних позицій обраного закладу -> тицяємо на одну з них і 
