@@ -222,21 +222,54 @@ bot.action(/^edit_place_(\d+)?/, async (ctx) => {
 
 	const place = await get(`SELECT name FROM places WHERE id = ?`, [placeId]);
 
-	// ✅ Спеціальна логіка для Доставки
+	// ✅ НОВА логіка для Доставки
 	if (place.name === 'Доставка') {
-		const items = await all(`SELECT id, name FROM items ORDER BY name`);
+		const day = await getOrCreateTargetDay();
 
+		const hasDelivery = await get(`
+			SELECT 1
+			FROM day_items
+			WHERE day_id = ?
+			AND place_id = ?
+			AND is_custom = 1
+			LIMIT 1
+	`, [day.id, placeId]);
+
+		// якщо ще нема доставок — одразу на додавання
+		if (!hasDelivery) {
+
+			// беремо позиції з ШАБЛОНУ Доставки (place_id = 6)
+			const items = await all(`
+				SELECT i.id as item_id, i.name
+				FROM place_items pi
+				JOIN items i ON i.id = pi.item_id
+				WHERE pi.place_id = 6
+				ORDER BY i.name
+			`);
+
+			return ctx.editMessageText(
+				'Оберіть позицію для доставки:',
+				Markup.inlineKeyboard(
+					items.map(i => [
+						Markup.button.callback(
+							i.name,
+							`delivery_pick_${placeId}_${i.item_id}`
+						)
+					])
+				)
+			);
+		}
+
+		// якщо вже є — показуємо меню
 		return ctx.editMessageText(
-			'Оберіть позицію для доставки:',
-			Markup.inlineKeyboard(
-				items.map(i => [
-					Markup.button.callback(i.name, `delivery_pick_${placeId}_${i.id}`)
-				])
-			)
+			'Що зробити з доставкою?',
+			Markup.inlineKeyboard([
+				[Markup.button.callback('➕ Додати доставку', `delivery_add_menu_${placeId}`)],
+				[Markup.button.callback('❌ Видалити з доставки', `delivery_remove_menu_${placeId}`)],
+			])
 		);
 	}
 
-	// звичайна логіка для інших
 	// звичайна логіка для інших
 	const day = await getOrCreateTargetDay();
 
@@ -264,6 +297,74 @@ bot.action(/^edit_place_(\d+)?/, async (ctx) => {
 		'Що зробити?',
 		Markup.inlineKeyboard(buttons)
 	);
+});
+
+bot.action(/^delivery_add_menu_(\d+)$/, async (ctx) => {
+	const placeId = ctx.match[1];
+	const day = await getOrCreateTargetDay();
+
+	const items = await all(`
+		SELECT i.id as item_id, i.name
+		FROM place_items pi
+		JOIN items i ON i.id = pi.item_id
+		WHERE pi.place_id = 6
+		ORDER BY i.name
+	`);
+
+	ctx.editMessageText(
+		'Оберіть позицію для доставки:',
+		Markup.inlineKeyboard(
+			items.map(i => [
+				Markup.button.callback(
+					i.name,
+					`delivery_pick_${placeId}_${i.item_id}`
+				)
+			])
+		)
+	);
+});
+
+bot.action(/^delivery_remove_menu_(\d+)$/, async (ctx) => {
+	const placeId = ctx.match[1];
+	const day = await getOrCreateTargetDay();
+
+	const deliveries = await all(`
+		SELECT di.id, di.comment, i.name
+		FROM day_items di
+		JOIN items i ON i.id = di.item_id
+		WHERE di.day_id = ?
+		  AND di.place_id = ?
+		  AND di.is_custom = 1
+	`, [day.id, placeId]);
+
+	if (!deliveries.length) {
+		return ctx.editMessageText('Немає доставок для видалення');
+	}
+
+	ctx.editMessageText(
+		'Оберіть позицію для видалення з доставки:',
+		Markup.inlineKeyboard(
+			deliveries.map(d => [
+				Markup.button.callback(
+					`${d.name}${d.comment ? ' (' + d.comment + ')' : ''}`,
+					`delivery_confirm_remove_${d.id}`
+				)
+			])
+		)
+	);
+});
+
+bot.action(/^delivery_confirm_remove_(\d+)$/, async (ctx) => {
+	await ctx.answerCbQuery();
+
+	const id = ctx.match[1];
+
+	await run(`
+		DELETE FROM day_items
+		WHERE id = ?
+	`, [id]);
+
+	ctx.editMessageText('✅ Позицію видалено з доставки');
 });
 
 /* ----- CHANGE QTY ----- */
