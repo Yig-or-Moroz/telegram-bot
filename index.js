@@ -1,4 +1,4 @@
-require('dotenv').config();
+require ('dotenv').config();
 const { Telegraf, Markup, session } = require('telegraf');
 const db = require('./db');
 
@@ -47,12 +47,18 @@ async function getOrCreateTargetDay() {
 	return { id: r.lastID, date: targetDate };
 }
 
+function formatDateUA(dateStr) {
+	const [y, m, d] = dateStr.split('-');
+	return `${d}.${m}.${y}`;
+}
+
 /* ---------------- MENU ---------------- */
 
 const mainMenu = () =>
 	Markup.keyboard([
 		['📄 Переглянути заявку'],
 		['✏️ Редагувати заявку'],
+		['🧩 Змінити шаблон'],   // 👈 нова кнопка
 		['🗂 Попередні заявки']
 	]).resize();
 
@@ -69,8 +75,8 @@ async function getFinalItemsForPlace(dayId, placeId) {
 	const diffs = await all(`
 		SELECT * FROM day_items
 		WHERE day_id = ? 
-		  AND place_id = ?
-		  AND is_custom = 0   -- ❗ КЛЮЧОВЕ
+			AND place_id = ?
+			AND is_custom = 0   -- ❗ КЛЮЧОВЕ
 	`, [dayId, placeId]);
 
 	const result = [];
@@ -101,6 +107,15 @@ async function getFinalItemsForPlace(dayId, placeId) {
 	return result;
 }
 
+/* ---------------- HELPERS ---------------- */
+
+function esc(s = '') {
+	return s
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;');
+}
+
 /* ---------------- VIEW TEXT ---------------- */
 
 async function buildRequestText(dayId, date) {
@@ -114,31 +129,43 @@ async function buildRequestText(dayId, date) {
 		ORDER BY id
 	`, [dbDay]);
 
-	let text = `Заявка на ${date}\n`;
+	let text = `<i>Заявка на ${formatDateUA(date)} р.</i>\n`;
 
 	for (const place of places) {
 		const items = await getFinalItemsForPlace(dayId, place.id);
 
 		const customs = await all(`
-			SELECT di.quantity, di.comment, i.name
-			FROM day_items di
-			JOIN items i ON i.id = di.item_id
-			WHERE di.day_id = ?
-			AND di.place_id = ?
-			AND di.is_custom = 1
-		`, [dayId, place.id]);
+		SELECT di.quantity, di.comment, i.name
+		FROM day_items di
+		JOIN items i ON i.id = di.item_id
+		WHERE di.day_id = ?
+		AND di.place_id = ?
+		AND di.is_custom = 1
+	`, [dayId, place.id]);
 
 		if (items.length === 0 && customs.length === 0) continue;
 
-		text += `\n\n${place.name}\n`;
+		text += `\n\n<b><u>${esc(place.name)}</u></b>\n`;
+
+		// ✅ СПЕЦ ЛОГІКА ДЛЯ ДОСТАВКИ (ПЕРШОЮ!)
+		if (place.name === 'Доставка') {
+			for (const c of customs) {
+				text += `• ${c.name} — 1`;
+				if (c.comment) text += ` (${c.comment})`;
+				text += '\n';
+			}
+			continue; // ❗ дуже важливо
+		}
+
+		// --- ЗВИЧАЙНА ЛОГІКА ДЛЯ ІНШИХ ЗАКЛАДІВ ---
 
 		for (const i of items) {
 			text += `• ${i.name} — ${i.qty}\n`;
 		}
 
 		if (customs.length) {
-			text += `______________\n`;
-			text += `Заказні\n`;
+			text += `___________________________\n`;
+			text += `<u>Заказні</u>\n`;
 			for (const c of customs) {
 				text += `• ${c.name} — ${c.quantity}`;
 				if (c.comment) text += ` (${c.comment})`;
@@ -154,40 +181,74 @@ async function buildRequestText(dayId, date) {
 
 bot.start(async (ctx) => {
 	const day = await getOrCreateTargetDay();
-	ctx.reply(await buildRequestText(day.id, day.date), mainMenu());
+	ctx.reply(await buildRequestText(day.id, day.date), {
+		...mainMenu(),
+		parse_mode: 'HTML'
+	});
 });
 
 bot.hears('📄 Переглянути заявку', async (ctx) => {
 	const day = await getOrCreateTargetDay();
-	ctx.reply(await buildRequestText(day.id, day.date), mainMenu());
+	ctx.reply(await buildRequestText(day.id, day.date), {
+		...mainMenu(),
+		parse_mode: 'HTML'
+	});
 });
 
 /* ---------------- EDIT FLOW ---------------- */
 
 bot.hears('✏️ Редагувати заявку', async (ctx) => {
-	const places = await all(`SELECT id, name FROM places ORDER BY id`);
+	const { targetDay } = getTargetDateInfo();
+
+	const places = await all(`
+		SELECT id, name
+		FROM places
+		WHERE instr(',' || days_of_week || ',', ',' || ? || ',') > 0
+		ORDER BY id
+	`, [targetDay]);
+
 	ctx.reply(
 		'Оберіть заклад:',
 		Markup.inlineKeyboard(
-			places.map(p => [Markup.button.callback(p.name, `edit_place_${p.id}`)])
+			places.map(p => [
+				Markup.button.callback(p.name, `edit_place_${p.id}`)
+			])
 		)
 	);
 });
 
-bot.action(/edit_place_(\d+)/, async (ctx) => {
-	const id = ctx.match[1];
+bot.action(/^edit_place_(\d+)?/, async (ctx) => {
+	const placeId = ctx.match[1];
+
+	const place = await get(`SELECT name FROM places WHERE id = ?`, [placeId]);
+
+	// ✅ Спеціальна логіка для Доставки
+	if (place.name === 'Доставка') {
+		const items = await all(`SELECT id, name FROM items ORDER BY name`);
+
+		return ctx.editMessageText(
+			'Оберіть позицію для доставки:',
+			Markup.inlineKeyboard(
+				items.map(i => [
+					Markup.button.callback(i.name, `delivery_pick_${placeId}_${i.id}`)
+				])
+			)
+		);
+	}
+
+	// звичайна логіка для інших
 	ctx.editMessageText(
 		'Що зробити?',
 		Markup.inlineKeyboard([
-			[Markup.button.callback('🔢 Змінити кількість', `edit_qty_menu_${id}`)],
-			[Markup.button.callback('🧁 Додати заказний', `add_custom_${id}`)]
+			[Markup.button.callback('🔢 Змінити кількість', `edit_qty_menu_${placeId}`)],
+			[Markup.button.callback('🧁 Додати заказний', `add_custom_${placeId}`)]
 		])
 	);
 });
 
 /* ----- CHANGE QTY ----- */
 
-bot.action(/edit_qty_menu_(\d+)/, async (ctx) => {
+bot.action(/^edit_qty_menu_(\d+)?/, async (ctx) => {
 	const placeId = ctx.match[1];
 	const day = await getOrCreateTargetDay();
 	const items = await getFinalItemsForPlace(day.id, placeId);
@@ -202,7 +263,9 @@ bot.action(/edit_qty_menu_(\d+)/, async (ctx) => {
 	);
 });
 
-bot.action(/edit_qty_(\d+)_(\d+)/, async (ctx) => {
+bot.action(/^edit_qty_(\d+)_(\d+)?/, async (ctx) => {
+	await ctx.answerCbQuery();
+
 	ctx.session.state = 'editQty';
 	ctx.session.placeId = ctx.match[1];
 	ctx.session.itemId = ctx.match[2];
@@ -212,7 +275,7 @@ bot.action(/edit_qty_(\d+)_(\d+)/, async (ctx) => {
 
 /* ----- CUSTOM ITEM ----- */
 
-bot.action(/add_custom_(\d+)/, async (ctx) => {
+bot.action(/^add_custom_(\d+)?/, async (ctx) => {
 	const placeId = ctx.match[1];
 	const day = await getOrCreateTargetDay();
 	const items = await getFinalItemsForPlace(day.id, placeId);
@@ -230,7 +293,9 @@ bot.action(/add_custom_(\d+)/, async (ctx) => {
 	);
 });
 
-bot.action(/custom_pick_(\d+)_(\d+)/, async (ctx) => {
+bot.action(/^custom_pick_(\d+)_(\d+)?/, async (ctx) => {
+	await ctx.answerCbQuery();
+
 	ctx.session.state = 'customComment';
 	ctx.session.placeId = ctx.match[1];
 	ctx.session.itemId = ctx.match[2];
@@ -238,12 +303,133 @@ bot.action(/custom_pick_(\d+)_(\d+)/, async (ctx) => {
 	await ctx.reply('Введіть коментар (або "ні"):');
 });
 
+/* ---------- DELIVERY ITEM ----------- */
+
+bot.action(/^delivery_pick_(\d+)_(\d+)?/, async (ctx) => {
+	await ctx.answerCbQuery();
+
+	ctx.session.state = 'deliveryComment';
+	ctx.session.placeId = ctx.match[1];
+	ctx.session.itemId = ctx.match[2];
+
+	await ctx.reply('Введіть коментар (або "ні"):');
+});
+
+
+/* ---------------- CHANGE TEMPLATE ---------------- */
+
+bot.hears('🧩 Змінити шаблон', async (ctx) => {
+	const places = await all(`SELECT id, name FROM places ORDER BY id`);
+
+	ctx.reply(
+		'Оберіть заклад для редагування шаблону:',
+		Markup.inlineKeyboard(
+			places.map(p => [
+				Markup.button.callback(p.name, `tpl_place_${p.id}`)
+			])
+		)
+	);
+});
+
+bot.action(/^tpl_place_(\d+)?/, async (ctx) => {
+	const placeId = ctx.match[1];
+
+	ctx.editMessageText(
+		'Що змінити у шаблоні?',
+		Markup.inlineKeyboard([
+			[Markup.button.callback('🔢 Змінити кількість', `tpl_qty_menu_${placeId}`)],
+			[Markup.button.callback('➕ Додати позицію', `tpl_add_item_${placeId}`)],
+			[Markup.button.callback('❌ Видалити позицію', `tpl_remove_item_${placeId}`)],
+			[Markup.button.callback('📅 Змінити дні тижня', `tpl_days_${placeId}`)]
+		])
+	);
+});
+
+bot.action(/^tpl_qty_menu_(\d+)?/, async (ctx) => {
+	const placeId = ctx.match[1];
+
+	const items = await all(`
+		SELECT pi.item_id, i.name, pi.default_quantity
+		FROM place_items pi
+		JOIN items i ON i.id = pi.item_id
+		WHERE pi.place_id = ?
+		ORDER BY i.name
+	`, [placeId]);
+
+	ctx.editMessageText(
+		'Оберіть позицію:',
+		Markup.inlineKeyboard(
+			items.map(i => [
+				Markup.button.callback(
+					`${i.name} — ${i.default_quantity}`,
+					`tpl_edit_qty_${placeId}_${i.item_id}`
+				)
+			])
+		)
+	);
+});
+
+bot.action(/^tpl_edit_qty_(\d+)_(\d+)?/, async (ctx) => {
+	await ctx.answerCbQuery();
+
+	ctx.session.state = 'tplEditQty';
+	ctx.session.placeId = ctx.match[1];
+	ctx.session.itemId = ctx.match[2];
+
+	await ctx.reply('Введіть нову кількість:');
+});
+
+/* ---------------- HISTORY ---------------- */
+
+bot.hears('🗂 Попередні заявки', async (ctx) => {
+	const days = await all(`SELECT * FROM days ORDER BY date DESC LIMIT 10`);
+	ctx.reply(
+		'Оберіть дату:',
+		Markup.inlineKeyboard(days.map(d => [Markup.button.callback(d.date, `view_day_${d.id}`)]))
+	);
+});
+
+bot.action(/^view_day_(\d+)?/, async (ctx) => {
+	const day = await get(`SELECT * FROM days WHERE id = ?`, [ctx.match[1]]);
+	ctx.editMessageText(await buildRequestText(day.id, day.date), { parse_mode: 'HTML' });
+});
+
+// --------------BOT ON ----------------------
+
 bot.on('text', async (ctx) => {
 	const state = ctx.session.state;
 	if (!state) return;
 
 	const text = ctx.message.text.trim();
 	const day = await getOrCreateTargetDay();
+
+	/* ---------- TEMPLATE QTY ---------- */
+	if (state === 'tplEditQty') {
+
+		const { placeId, itemId } = ctx.session;
+
+		const qty = parseInt(text);
+		if (isNaN(qty)) return ctx.reply('Потрібно число');
+
+		console.log('TPL EDIT QTY HIT'); // тепер побачиш
+
+		await run(`
+			UPDATE place_items
+			SET default_quantity = ?
+			WHERE place_id = ? AND item_id = ?
+		`, [qty, placeId, itemId]);
+
+		await run(`
+			DELETE FROM day_items
+			WHERE place_id = ?
+				AND item_id = ?
+				AND action = 'set'
+				AND is_custom = 0
+		`, [placeId, itemId]);
+
+		ctx.session.state = null;
+		return ctx.reply('✅ Шаблон оновлено', mainMenu());
+	}
 
 	/* ---------- EDIT QTY ---------- */
 	if (state === 'editQty') {
@@ -261,10 +447,9 @@ bot.on('text', async (ctx) => {
 		return ctx.reply('✅ Оновлено', mainMenu());
 	}
 
-	/* ---------- CUSTOM COMMENT ---------- */
-	if (state === 'customComment') {
+	/* ---------- DELIVERY ---------- */
+	if (state === 'deliveryComment' || state === 'customComment') {
 		const { placeId, itemId } = ctx.session;
-
 		const comment = (text.toLowerCase() === 'ні' || text === '') ? '' : text;
 
 		await run(`
@@ -274,27 +459,11 @@ bot.on('text', async (ctx) => {
 		`, [day.id, placeId, itemId, comment]);
 
 		ctx.session.state = null;
-		return ctx.reply('✅ Заказний додано', mainMenu());
+		return ctx.reply('✅ Додано', mainMenu());
 	}
-});
-
-/* ---------------- HISTORY ---------------- */
-
-bot.hears('🗂 Попередні заявки', async (ctx) => {
-	const days = await all(`SELECT * FROM days ORDER BY date DESC LIMIT 10`);
-	ctx.reply(
-		'Оберіть дату:',
-		Markup.inlineKeyboard(days.map(d => [Markup.button.callback(d.date, `view_day_${d.id}`)]))
-	);
-});
-
-bot.action(/view_day_(\d+)/, async (ctx) => {
-	const day = await get(`SELECT * FROM days WHERE id = ?`, [ctx.match[1]]);
-	ctx.editMessageText(await buildRequestText(day.id, day.date));
 });
 
 /* ---------------- START ---------------- */
 
 bot.launch();
 console.log('Bot started');
-
