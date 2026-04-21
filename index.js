@@ -674,10 +674,26 @@ bot.action(/^tpl_days_(\d+)$/, async (ctx) => {
 /* ---------------- HISTORY ---------------- */
 
 bot.hears('🗂 Попередні заявки', async (ctx) => {
-	const days = await all(`SELECT * FROM days ORDER BY date DESC LIMIT 10`);
+	const days = await all(`
+		SELECT id, date
+		FROM days
+		ORDER BY date DESC
+	`);
+
+	if (!days.length) {
+		return ctx.reply('Історія ще порожня');
+	}
+
 	ctx.reply(
 		'Оберіть дату:',
-		Markup.inlineKeyboard(days.map(d => [Markup.button.callback(d.date, `view_day_${d.id}`)]))
+		Markup.inlineKeyboard(
+			days.map(d => [
+				Markup.button.callback(
+					formatDateUA(d.date),
+					`view_day_${d.id}`
+				)
+			])
+		)
 	);
 });
 
