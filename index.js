@@ -56,9 +56,10 @@ function formatDateUA(dateStr) {
 
 const mainMenu = () =>
 	Markup.keyboard([
+		['🎂 Торти в роботі'],
 		['📄 Переглянути заявку'],
 		['✏️ Редагувати заявку'],
-		['🧩 Змінити шаблон'],   // 👈 нова кнопка
+		['🧩 Змінити шаблон'], 
 		['🗂 Попередні заявки']
 	]).resize();
 
@@ -100,6 +101,85 @@ async function getFinalItemsForPlace(dayId, placeId) {
 				item_id: item.item_id,
 				name: item.name,
 				qty
+			});
+		}
+	}
+
+	return result;
+}
+
+/* ---------------- GET WORK CACKES ---------------- */
+
+async function getWorkCakesDetailed(dayId) {
+
+	const { targetDay } = getTargetDateInfo();
+
+	// тільки заклади які працюють завтра
+	const workingPlaces = await all(`
+		SELECT id
+		FROM places
+		WHERE instr(',' || days_of_week || ',', ',' || ? || ',') > 0
+	`, [targetDay]);
+
+	const baseItems = await all(`
+		SELECT DISTINCT i.id, i.name
+		FROM place_items pi
+		JOIN items i ON i.id = pi.item_id
+	`);
+
+	const result = [];
+
+	for (const item of baseItems) {
+
+		let normal = 0;
+
+		// ---------- ЗВИЧАЙНІ ----------
+		for (const p of workingPlaces) {
+			const items = await getFinalItemsForPlace(dayId, p.id);
+			const found = items.find(x => x.item_id === item.id);
+			if (found) normal += found.qty;
+		}
+
+		// ---------- ЗАКАЗНІ (БЕЗ ДОСТАВКИ!) ----------
+		const customsRaw = await all(`
+			SELECT comment
+			FROM day_items
+			WHERE day_id = ?
+				AND item_id = ?
+				AND is_custom = 1
+				AND place_id != 6
+		`, [dayId, item.id]);
+
+		const customsGrouped = {};
+
+		for (const c of customsRaw) {
+			const key = c.comment || 'без коментаря';
+			customsGrouped[key] = (customsGrouped[key] || 0) + 1;
+		}
+
+		// ---------- ДОСТАВКА (з коментарями) ----------
+		const deliveryRaw = await all(`
+			SELECT comment
+			FROM day_items
+			WHERE day_id = ?
+				AND item_id = ?
+				AND is_custom = 1
+				AND place_id = 6
+		`, [dayId, item.id]);
+
+		const deliveryGrouped = {};
+
+		for (const d of deliveryRaw) {
+			const key = d.comment || 'без коментаря';
+			deliveryGrouped[key] = (deliveryGrouped[key] || 0) + 1;
+		}
+
+		if (normal || customsRaw.length || deliveryRaw.length) {
+			result.push({
+				name: item.name,
+				normal,
+				customsGrouped,
+				deliveryGrouped
 			});
 		}
 	}
@@ -177,7 +257,7 @@ async function buildRequestText(dayId, date) {
 	return text;
 }
 
-/* ---------------- START / VIEW ---------------- */
+/* ---------------- START ---------------- */
 
 bot.start(async (ctx) => {
 	const day = await getOrCreateTargetDay();
@@ -186,6 +266,49 @@ bot.start(async (ctx) => {
 		parse_mode: 'HTML'
 	});
 });
+
+/* ---------------- VIEW GET WORK CACKES ---------------- */
+
+bot.hears('🎂 Торти в роботі', async (ctx) => {
+	const day = await getOrCreateTargetDay();
+	const cakes = await getWorkCakesDetailed(day.id);
+
+	if (!cakes.length) {
+		return ctx.reply('Немає тортів у роботі на цей день', mainMenu());
+	}
+
+	let text = `<i>Торти в роботі на ${formatDateUA(day.date)}</i>\n`;
+
+	for (const c of cakes) {
+		text += `\n\n<b>${esc(c.name)}</b>:\n`;
+
+		if (c.normal) {
+			text += `Звичайні — ${c.normal}\n`;
+		}
+
+		// ---------- Заказні ----------
+		const customKeys = Object.keys(c.customsGrouped);
+		if (customKeys.length) {
+			text += `Заказні:\n`;
+			for (const k of customKeys) {
+				text += `      ${c.customsGrouped[k]} - ${esc(k)}\n`;
+			}
+		}
+
+		// ---------- Доставка ----------
+		const deliveryKeys = Object.keys(c.deliveryGrouped);
+		if (deliveryKeys.length) {
+			text += `Доставка:\n`;
+			for (const k of deliveryKeys) {
+				text += `      ${c.deliveryGrouped[k]} - ${esc(k)}\n`;
+			}
+		}
+	}
+
+	ctx.reply(text, { parse_mode: 'HTML', ...mainMenu() });
+});
+
+/* ---------------- VIEW APPLICATION ---------------- */
 
 bot.hears('📄 Переглянути заявку', async (ctx) => {
 	const day = await getOrCreateTargetDay();
