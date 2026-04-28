@@ -77,7 +77,7 @@ async function getFinalItemsForPlace(dayId, placeId) {
 		SELECT * FROM day_items
 		WHERE day_id = ? 
 			AND place_id = ?
-			AND is_custom = 0   -- ❗ КЛЮЧОВЕ
+			AND is_custom = 0 
 	`, [dayId, placeId]);
 
 	const result = [];
@@ -234,7 +234,7 @@ async function buildRequestText(dayId, date) {
 				if (c.comment) text += ` (${c.comment})`;
 				text += '\n';
 			}
-			continue; // ❗ дуже важливо
+			continue; 
 		}
 
 		// --- ЗВИЧАЙНА ЛОГІКА ДЛЯ ІНШИХ ЗАКЛАДІВ ---
@@ -456,8 +456,8 @@ bot.action(/^delivery_remove_menu_(\d+)$/, async (ctx) => {
 		FROM day_items di
 		JOIN items i ON i.id = di.item_id
 		WHERE di.day_id = ?
-		  AND di.place_id = ?
-		  AND di.is_custom = 1
+			AND di.place_id = ?
+			AND di.is_custom = 1
 	`, [day.id, placeId]);
 
 	if (!deliveries.length) {
@@ -522,7 +522,13 @@ bot.action(/^edit_qty_(\d+)_(\d+)?/, async (ctx) => {
 bot.action(/^add_custom_(\d+)?/, async (ctx) => {
 	const placeId = ctx.match[1];
 	const day = await getOrCreateTargetDay();
-	const items = await getFinalItemsForPlace(day.id, placeId);
+	const items = await all(`
+		SELECT i.id as item_id, i.name
+		FROM place_items pi
+		JOIN items i ON i.id = pi.item_id
+		WHERE pi.place_id = 6
+		ORDER BY i.name
+	`);
 
 	ctx.editMessageText(
 		'Оберіть позицію для заказного:',
@@ -548,8 +554,8 @@ bot.action(/^remove_custom_(\d+)$/, async (ctx) => {
 		FROM day_items di
 		JOIN items i ON i.id = di.item_id
 		WHERE di.day_id = ?
-		  AND di.place_id = ?
-		  AND di.is_custom = 1
+			AND di.place_id = ?
+			AND di.is_custom = 1
 	`, [day.id, placeId]);
 
 	if (!customs.length) {
@@ -713,10 +719,17 @@ bot.action(/^tpl_add_pick_(\d+)_(\d+)$/, async (ctx) => {
 		return ctx.answerCbQuery('Вже є в шаблоні ❌', { show_alert: true });
 	}
 
-	await run(`
+	if (placeId == '6') {
+			await run(`
+		INSERT INTO place_items (place_id, item_id, default_quantity)
+		VALUES (?, ?, 0)
+	`, [placeId, itemId]);
+	} else {
+		await run(`
 		INSERT INTO place_items (place_id, item_id, default_quantity)
 		VALUES (?, ?, 1)
 	`, [placeId, itemId]);
+	}
 
 	await ctx.answerCbQuery();
 
@@ -841,8 +854,6 @@ bot.on('text', async (ctx) => {
 
 		const qty = parseInt(text);
 		if (isNaN(qty)) return ctx.reply('Потрібно число');
-
-		console.log('TPL EDIT QTY HIT'); // тепер побачиш
 
 		await run(`
 			UPDATE place_items
