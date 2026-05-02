@@ -15,6 +15,7 @@ require('./handlers/edit')(bot);
 require('./handlers/template')(bot);
 require('./handlers/history')(bot);
 require('./handlers/workCakes')(bot);
+require('./handlers/admin')(bot);
 require('./handlers/textState')(bot);
 
 bot.launch();

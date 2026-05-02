@@ -13,6 +13,21 @@ module.exports = (bot) => {
 		const text = ctx.message.text.trim();
 		const day = await getOrCreateTargetDay();
 
+		/* ---------- ADMIN ADD PLACE ---------- */
+		if (state === 'adminAddPlace') {
+			const name = text.trim();
+
+			if (!name) return ctx.reply('Назва не може бути пустою');
+
+			await run(`
+				INSERT INTO places (name, days_of_week)
+				VALUES (?, '1,2,3,4,5,6,7')
+			`, [name]);
+
+			ctx.session.state = null;
+			return ctx.reply('✅ Заклад додано', mainMenu());
+		}
+
 		/* ---------- TEMPLATE QTY ---------- */
 		if (state === 'tplEditQty') {
 
@@ -76,16 +91,21 @@ module.exports = (bot) => {
 
 			// додаємо в шаблон (якщо нема)
 			const existsInTemplate = await get(`
-			SELECT 1 FROM place_items
-			WHERE place_id = ? AND item_id = ?
-		`, [placeId, itemId]);
-
-			if (!existsInTemplate) {
-				await run(`
-				INSERT INTO place_items (place_id, item_id, default_quantity)
-				VALUES (?, ?, 1)
+				SELECT 1 FROM place_items
+				WHERE place_id = ? AND item_id = ?
 			`, [placeId, itemId]);
-			}
+
+				if (!existsInTemplate) {
+					const place = await get(`SELECT days_of_week FROM places WHERE id = ?`, [placeId]);
+					const days = [1,2,3,4,5,6,7];
+
+					for (const d of days) {
+						await run(`
+							INSERT INTO place_items (place_id, item_id, default_quantity, weekday)
+							VALUES (?, ?, 1, ?)
+						`, [placeId, itemId, d]);
+					}
+				}
 
 			ctx.session.state = null;
 
