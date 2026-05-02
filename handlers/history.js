@@ -6,7 +6,12 @@ const { Markup } = require('telegraf');
 module.exports = (bot) => {
 
 	bot.hears('🗂 Попередні заявки', async (ctx) => {
-		const days = await all(`SELECT id, date FROM days ORDER BY date DESC`);
+		const days = await all(`
+			SELECT id, date 
+			FROM days 
+			ORDER BY date DESC
+			LIMIT 10
+		`);
 
 		ctx.reply(
 			'Оберіть дату:',
