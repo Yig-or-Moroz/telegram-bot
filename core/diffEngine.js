@@ -1,13 +1,24 @@
-const { all } = require('./db');
+const { all, get } = require('./db');
 
 async function getFinalItemsForPlace(dayId, placeId) {
+	// 🔹 Дізнаємось дату і день тижня
+	const day = await get(`
+		SELECT date FROM days WHERE id = ?
+	`, [dayId]);
+
+	const jsDay = new Date(day.date).getDay();
+	const dbDay = jsDay === 0 ? 7 : jsDay;
+
+	// 🔹 Беремо шаблон ТІЛЬКИ для цього weekday
 	const base = await all(`
-		SELECT i.id item_id, i.name, pi.default_quantity
+		SELECT i.id AS item_id, i.name, pi.default_quantity
 		FROM place_items pi
 		JOIN items i ON i.id = pi.item_id
 		WHERE pi.place_id = ?
-	`, [placeId]);
+			AND pi.weekday = ?
+	`, [placeId, dbDay]);
 
+	// 🔹 Всі дифи на цей день
 	const diffs = await all(`
 		SELECT * FROM day_items
 		WHERE day_id = ? 

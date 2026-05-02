@@ -24,8 +24,15 @@ module.exports = (bot) => {
 			await run(`
 				UPDATE place_items
 				SET default_quantity = ?
-				WHERE place_id = ? AND item_id = ?
-			`, [qty, placeId, itemId]);
+				WHERE place_id = ?
+				AND item_id = ?
+				AND weekday = ?
+			`, [
+				qty,
+				ctx.session.placeId,
+				ctx.session.itemId,
+				ctx.session.weekday
+			]);
 
 			await run(`
 				DELETE FROM day_items

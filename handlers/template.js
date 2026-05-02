@@ -16,6 +16,7 @@ module.exports = (bot) => {
 		);
 	});
 
+
 	bot.action(/^tpl_place_(\d+)?/, async (ctx) => {
 		const placeId = ctx.match[1];
 
@@ -30,39 +31,78 @@ module.exports = (bot) => {
 		);
 	});
 
-	bot.action(/^tpl_qty_menu_(\d+)?/, async (ctx) => {
+
+	bot.action(/^tpl_qty_menu_(\d+)$/, async (ctx) => {
 		const placeId = ctx.match[1];
 
-		const items = await all(`
-			SELECT pi.item_id, i.name, pi.default_quantity
-			FROM place_items pi
-			JOIN items i ON i.id = pi.item_id
-			WHERE pi.place_id = ?
-			ORDER BY i.name
-		`, [placeId]);
+		const place = await get(`SELECT days_of_week, name FROM places WHERE id = ?`, [placeId]);
+		const days = place.days_of_week.split(',').map(d => d.trim());
 
-		ctx.editMessageText(
-			'Оберіть позицію:',
+		const dayNames = {
+			1: 'Понеділок',
+			2: 'Вівторок',
+			3: 'Середа',
+			4: 'Четвер',
+			5: 'Пʼятниця',
+			6: 'Субота',
+			7: 'Неділя'
+		};
+
+		await ctx.editMessageText(
+			`Оберіть день для шаблону закладу "${place.name}":`,
 			Markup.inlineKeyboard(
-				items.map(i => [
+				days.map(d => [
 					Markup.button.callback(
-						`${i.name} — ${i.default_quantity}`,
-						`tpl_edit_qty_${placeId}_${i.item_id}`
+						dayNames[d],
+						`tpl_qty_day_${placeId}_${d}`
 					)
 				])
 			)
 		);
 	});
 
-	bot.action(/^tpl_edit_qty_(\d+)_(\d+)?/, async (ctx) => {
+
+	bot.action(/^tpl_qty_day_(\d+)_(\d+)$/, async (ctx) => {
+		const placeId = ctx.match[1];
+		const weekday = ctx.match[2];
+
+		const items = await all(`
+			SELECT pi.item_id, i.name, pi.default_quantity
+			FROM place_items pi
+			JOIN items i ON i.id = pi.item_id
+			WHERE pi.place_id = ?
+			AND pi.weekday = ?
+			ORDER BY i.name
+		`, [placeId, weekday]);
+
+		if (!items.length) {
+			return ctx.editMessageText('На цей день шаблон ще порожній.');
+		}
+
+		await ctx.editMessageText(
+			'Оберіть позицію:',
+			Markup.inlineKeyboard(
+				items.map(i => [
+					Markup.button.callback(
+						`${i.name} — ${i.default_quantity}`,
+						`tpl_edit_qty_${placeId}_${i.item_id}_${weekday}`
+					)
+				])
+			)
+		);
+	});
+
+	bot.action(/^tpl_edit_qty_(\d+)_(\d+)_(\d+)$/, async (ctx) => {
 		await ctx.answerCbQuery();
 
 		ctx.session.state = 'tplEditQty';
 		ctx.session.placeId = ctx.match[1];
 		ctx.session.itemId = ctx.match[2];
+		ctx.session.weekday = ctx.match[3];
 
 		await ctx.reply('Введіть нову кількість:');
 	});
+
 
 	bot.action(/^tpl_add_item_(\d+)$/, async (ctx) => {
 		const placeId = ctx.match[1];
@@ -77,6 +117,7 @@ module.exports = (bot) => {
 			])
 		);
 	});
+
 
 	bot.action(/^tpl_add_existing_(\d+)$/, async (ctx) => {
 		const placeId = ctx.match[1];
@@ -95,36 +136,39 @@ module.exports = (bot) => {
 		);
 	});
 
+
 	bot.action(/^tpl_add_pick_(\d+)_(\d+)$/, async (ctx) => {
 		const placeId = ctx.match[1];
 		const itemId = ctx.match[2];
 
 		// перевірка дублю
-		const exists = await get(`
-			SELECT 1 FROM place_items
-			WHERE place_id = ? AND item_id = ?
-		`, [placeId, itemId]);
+		const place = await get(`SELECT days_of_week FROM places WHERE id = ?`, [placeId]);
+		const days = [1,2,3,4,5,6,7];
 
-		if (exists) {
-			return ctx.answerCbQuery('Вже є в шаблоні ❌', { show_alert: true });
-		}
+		for (const d of days) {
+			const exists = await get(`
+				SELECT 1 FROM place_items
+				WHERE place_id = ? AND item_id = ? AND weekday = ?
+			`, [placeId, itemId, d]);
 
-		if (placeId == '6') {
+			if (!exists) {
 				await run(`
-			INSERT INTO place_items (place_id, item_id, default_quantity)
-			VALUES (?, ?, 0)
-		`, [placeId, itemId]);
-		} else {
-			await run(`
-			INSERT INTO place_items (place_id, item_id, default_quantity)
-			VALUES (?, ?, 1)
-		`, [placeId, itemId]);
+					INSERT INTO place_items (place_id, item_id, weekday, default_quantity)
+					VALUES (?, ?, ?, ?)
+				`, [
+					placeId,
+					itemId,
+					d,
+					placeId == '6' ? 0 : 1
+				]);
+			}
 		}
 
 		await ctx.answerCbQuery();
 
 		return ctx.editMessageText('✅ Позицію додано в шаблон');
 	});
+
 
 	bot.action(/^tpl_add_new_(\d+)$/, async (ctx) => {
 		const placeId = ctx.match[1];
@@ -134,6 +178,7 @@ module.exports = (bot) => {
 
 		await ctx.reply('Введіть назву нової позиції:');
 	});
+
 
 	bot.action(/^tpl_remove_item_(\d+)$/, async (ctx) => {
 		const placeId = ctx.match[1];
@@ -163,6 +208,7 @@ module.exports = (bot) => {
 		);
 	});
 
+
 	bot.action(/^tpl_confirm_remove_(\d+)$/, async (ctx) => {
 		await ctx.answerCbQuery();
 
@@ -183,6 +229,7 @@ module.exports = (bot) => {
 
 		ctx.editMessageText('✅ Позицію видалено з шаблонів усіх закладів');
 	});
+
 
 	bot.action(/^tpl_days_(\d+)$/, async (ctx) => {
 		await ctx.answerCbQuery();

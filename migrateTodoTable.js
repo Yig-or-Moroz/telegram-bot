@@ -1,21 +1,34 @@
 const db = require('./db');
 
 db.serialize(() => {
-	console.log('Migrating day_item_progress...');
+	console.log('Cloning templates to all weekdays...');
 
-	db.run(`DROP TABLE IF EXISTS day_item_progress`);
+	db.all(`
+		SELECT pi.*, p.days_of_week
+		FROM place_items pi
+		JOIN places p ON p.id = pi.place_id
+		WHERE pi.weekday = 1
+	`, (err, rows) => {
+		if (err) throw err;
 
-	db.run(`
-		CREATE TABLE day_item_progress (
-			day_id INTEGER NOT NULL,
-			item_id INTEGER NOT NULL,
-			done INTEGER NOT NULL DEFAULT 0,
-			PRIMARY KEY (day_id, item_id),
-			FOREIGN KEY(day_id) REFERENCES days(id),
-			FOREIGN KEY(item_id) REFERENCES items(id)
-		)
-	`, () => {
-		console.log('Migration completed ✅');
-		process.exit(0);
+		const stmt = db.prepare(`
+			INSERT INTO place_items (place_id, item_id, weekday, default_quantity)
+			VALUES (?, ?, ?, ?)
+		`);
+
+		for (const row of rows) {
+			const days = row.days_of_week.split(',').map(d => d.trim());
+
+			for (const d of days) {
+				if (d == 1) continue; // понеділок вже є
+
+				stmt.run(row.place_id, row.item_id, d, row.default_quantity);
+			}
+		}
+
+		stmt.finalize(() => {
+			console.log('Migration done ✅');
+			process.exit(0);
+		});
 	});
 });

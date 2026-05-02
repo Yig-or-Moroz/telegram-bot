@@ -53,6 +53,7 @@ module.exports = (bot) => {
 					FROM place_items pi
 					JOIN items i ON i.id = pi.item_id
 					WHERE pi.place_id = 6
+						AND pi.weekday = 7
 					ORDER BY i.name
 				`);
 
@@ -213,6 +214,7 @@ module.exports = (bot) => {
 			FROM place_items pi
 			JOIN items i ON i.id = pi.item_id
 			WHERE pi.place_id = 6
+				AND pi.weekday = 7
 			ORDER BY i.name
 		`);
 
