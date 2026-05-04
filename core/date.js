@@ -29,4 +29,24 @@ function formatDateUA(dateStr) {
 	return `${d}.${m}.${y}`;
 }
 
-module.exports = { getTargetDateInfo, getOrCreateTargetDay, formatDateUA };
+async function getOrCreateDayByDate(dateStr) {
+	let day = await get(`SELECT * FROM days WHERE date = ?`, [dateStr]);
+	if (day) return day;
+
+	const r = await run(`INSERT INTO days (date) VALUES (?)`, [dateStr]);
+	return { id: r.lastID, date: dateStr };
+}
+
+function getShiftedDate(shift) {
+	const d = new Date();
+	d.setDate(d.getDate() + shift);
+	return d.toISOString().split('T')[0];
+}
+
+module.exports = {
+	getTargetDateInfo,
+	getOrCreateTargetDay,
+	formatDateUA,
+	getOrCreateDayByDate,
+	getShiftedDate
+};
