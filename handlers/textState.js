@@ -1,5 +1,5 @@
 const { get, all, run } = require('../core/db');
-const { getOrCreateTargetDay, getTargetDateInfo } = require('../core/date');
+const { getOrCreateTargetDay } = require('../core/date');
 const { getFinalItemsForPlace } = require('../core/diffEngine');
 //const { Markup } = require('telegraf');
 const mainMenu = require('../keyboards/mainMenu');

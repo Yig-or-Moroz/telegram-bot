@@ -1,17 +1,17 @@
 const { all } = require('../core/db');
-const { getTargetDateInfo } = require('../core/date');
+const { getDbDayFromDate } = require('../core/date');
 const { getFinalItemsForPlace } = require('../core/diffEngine');
 
-async function getWorkCakesDetailed(dayId) {
+async function getWorkCakesDetailed(dayId, date) {
 
-	const { targetDay } = getTargetDateInfo();
+	const dbDay = getDbDayFromDate(date);
 
 	// тільки заклади які працюють завтра
 	const workingPlaces = await all(`
 		SELECT id
 		FROM places
 		WHERE instr(',' || days_of_week || ',', ',' || ? || ',') > 0
-	`, [targetDay]);
+`, [dbDay]);
 
 	const baseItems = await all(`
 		SELECT DISTINCT i.id, i.name

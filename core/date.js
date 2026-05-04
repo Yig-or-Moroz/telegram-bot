@@ -43,10 +43,16 @@ function getShiftedDate(shift) {
 	return d.toISOString().split('T')[0];
 }
 
+function getDbDayFromDate(dateStr) {
+	const jsDay = new Date(dateStr).getDay();
+	return jsDay === 0 ? 7 : jsDay;
+}
+
 module.exports = {
 	getTargetDateInfo,
 	getOrCreateTargetDay,
 	formatDateUA,
 	getOrCreateDayByDate,
-	getShiftedDate
+	getShiftedDate,
+	getDbDayFromDate
 };
