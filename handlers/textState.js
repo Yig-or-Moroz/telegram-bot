@@ -1,7 +1,6 @@
 const { get, all, run } = require('../core/db');
-const { getOrCreateTargetDay } = require('../core/date');
+const { getOrCreateTargetDay, getOrCreateDayByDate } = require('../core/date');
 const { getFinalItemsForPlace } = require('../core/diffEngine');
-//const { Markup } = require('telegraf');
 const mainMenu = require('../keyboards/mainMenu');
 
 module.exports = (bot) => {	
@@ -146,7 +145,9 @@ module.exports = (bot) => {
 
 		/* ---------- EDIT QTY ---------- */
 		if (state === 'editQty') {
-			const { placeId, itemId } = ctx.session;
+			const { placeId, itemId, editDate } = ctx.session;
+
+			const day = await getOrCreateDayByDate(editDate);
 
 			const qty = parseInt(text);
 			if (isNaN(qty)) return ctx.reply('Потрібно число');
@@ -157,22 +158,66 @@ module.exports = (bot) => {
 			`, [day.id, placeId, itemId, qty]);
 
 			ctx.session.state = null;
+			ctx.session.editDate = null;
+
 			return ctx.reply('✅ Оновлено', mainMenu());
 		}
 
-		/* ---------- DELIVERY ---------- */
-		if (state === 'deliveryComment' || state === 'customComment') {
-			const { placeId, itemId } = ctx.session;
+		/* ---------- DELIVERY AND CUSTOM COMMENT---------- */
+		if (state === 'customComment') {
+			const { customPlaceId, itemId, customDate } = ctx.session;
+
 			const comment = (text.toLowerCase() === 'ні' || text === '') ? '' : text;
+
+			const day = await getOrCreateDayByDate(customDate);
 
 			await run(`
 				INSERT INTO day_items
 				(day_id, place_id, item_id, action, quantity, comment, is_custom)
 				VALUES (?, ?, ?, 'add', 1, ?, 1)
-			`, [day.id, placeId, itemId, comment]);
+			`, [day.id, customPlaceId, itemId, comment]);
 
 			ctx.session.state = null;
+			ctx.session.customPlaceId = null;
+			ctx.session.customDate = null;
+
+			return ctx.reply('✅ Заказний додано', mainMenu());
+		}
+
+		if (state === 'deliveryComment') {
+			const { itemId, deliveryDate } = ctx.session;
+			const comment = (text.toLowerCase() === 'ні' || text === '') ? '' : text;
+
+			const day = await getOrCreateDayByDate(deliveryDate);
+
+			await run(`
+				INSERT INTO day_items
+				(day_id, place_id, item_id, action, quantity, comment, is_custom)
+				VALUES (?, 6, ?, 'add', 1, ?, 1)
+			`, [day.id, itemId, comment]);
+
+			ctx.session.state = null;
+			ctx.session.deliveryDate = null;
+
 			return ctx.reply('✅ Додано', mainMenu());
+		}
+
+		if (ctx.session.state === 'deliveryComment') {
+			const comment = ctx.message.text.toLowerCase() === 'ні'
+				? ''
+				: ctx.message.text;
+
+			const day = await getOrCreateDayByDate(ctx.session.deliveryDate);
+
+			await run(`
+				INSERT INTO day_items
+					(day_id, place_id, item_id, qty, is_custom, comment)
+				VALUES (?, 6, ?, 1, 1, ?)
+			`, [day.id, ctx.session.itemId, comment]);
+
+			ctx.session.state = null;
+
+			return ctx.reply('✅ Додано');
 		}
 	});
 }
