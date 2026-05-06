@@ -1,13 +1,7 @@
 const mainMenu = require('../keyboards/mainMenu');
-const { getOrCreateTargetDay } = require('../core/date');
-const { buildRequestText } = require('../services/requestBuilder');
 
 module.exports = (bot) => {
 	bot.start(async (ctx) => {
-		const day = await getOrCreateTargetDay();
-		ctx.reply(await buildRequestText(day.id, day.date), {
-			...mainMenu(),
-			parse_mode: 'HTML'
-		});
+		await ctx.reply('Вітаю 👋 Оберіть дію:', mainMenu());
 	});
 };

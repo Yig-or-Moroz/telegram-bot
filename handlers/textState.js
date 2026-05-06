@@ -1,5 +1,5 @@
 const { get, all, run } = require('../core/db');
-const { getOrCreateTargetDay, getOrCreateDayByDate } = require('../core/date');
+const { getOrCreateDayByDate } = require('../core/date');
 const { getFinalItemsForPlace } = require('../core/diffEngine');
 const mainMenu = require('../keyboards/mainMenu');
 
@@ -10,7 +10,6 @@ module.exports = (bot) => {
 		if (!state) return;
 
 		const text = ctx.message.text.trim();
-		const day = await getOrCreateTargetDay();
 
 		/* ---------- ADMIN ADD PLACE ---------- */
 		if (state === 'adminAddPlace') {
