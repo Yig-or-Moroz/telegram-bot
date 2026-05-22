@@ -200,23 +200,6 @@ module.exports = (bot) => {
 
 			return ctx.reply('✅ Додано', mainMenu());
 		}
-
-		if (ctx.session.state === 'deliveryComment') {
-			const comment = ctx.message.text.toLowerCase() === 'ні'
-				? ''
-				: ctx.message.text;
-
-			const day = await getOrCreateDayByDate(ctx.session.deliveryDate);
-
-			await run(`
-				INSERT INTO day_items
-					(day_id, place_id, item_id, qty, is_custom, comment)
-				VALUES (?, 6, ?, 1, 1, ?)
-			`, [day.id, ctx.session.itemId, comment]);
-
-			ctx.session.state = null;
-
-			return ctx.reply('✅ Додано');
-		}
 	});
 }
+

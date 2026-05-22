@@ -14,6 +14,9 @@ const mainMenu = require('../keyboards/mainMenu');
 module.exports = (bot) => {
 
 	bot.hears('✏️ Редагувати заявку', async (ctx) => {
+
+		ctx.session.state = null;
+
 		const today = getShiftedDate(0);
 		const tomorrow = getShiftedDate(1);
 		const afterTomorrow = getShiftedDate(2);
@@ -21,9 +24,9 @@ module.exports = (bot) => {
 		await ctx.reply(
 			'Оберіть заявку:',
 			Markup.inlineKeyboard([
-				[Markup.button.callback(`🛠 Заявка на ${formatDateUA(today)}`, `edit_date_${today}`)],
-				[Markup.button.callback(`🎂 Обтягувати на ${formatDateUA(tomorrow)}`, `edit_date_${tomorrow}`)],
-				[Markup.button.callback(`🧁 Заготовки на ${formatDateUA(afterTomorrow)}`, `edit_date_${afterTomorrow}`)],
+				[Markup.button.callback(`🗳 Вивоз на ${formatDateUA(today)}`, `edit_date_${today}`)],
+				[Markup.button.callback(`🎂 Заявка на ${formatDateUA(tomorrow)}`, `edit_date_${tomorrow}`)],
+				[Markup.button.callback(`🥞 Заготовки на ${formatDateUA(afterTomorrow)}`, `edit_date_${afterTomorrow}`)],
 				[Markup.button.callback(`📝 Заказні`, `edit_custom_places`)],
 				[Markup.button.callback(`🚚 Доставка`, `edit_delivery_dates`)]
 				
@@ -32,7 +35,7 @@ module.exports = (bot) => {
 	});
 
 
-	bot.action(/edit_date_(.+)/, async (ctx) => {
+	bot.action(/edit_date_([^_]+)/, async (ctx) => {
 		const date = ctx.match[1];
 		const dbDay = getDbDayFromDate(date);
 
@@ -54,7 +57,7 @@ module.exports = (bot) => {
 		);
 	});
 
-	bot.action(/edit_place_(.+)_(\d+)/, async (ctx) => {
+	bot.action(/edit_place_([^_]+)_(\d+)/, async (ctx) => {
 		const date = ctx.match[1];
 		const placeId = ctx.match[2];
 
@@ -74,7 +77,7 @@ module.exports = (bot) => {
 		);
 	});
 
-	bot.action(/edit_qty_(.+)_(\d+)_(\d+)/, async (ctx) => {
+	bot.action(/^edit_qty_(\d{4}-\d{2}-\d{2})_(\d+)_(\d+)$/, async (ctx) => {
 		await ctx.answerCbQuery();
 
 		ctx.session.state = 'editQty';
@@ -106,7 +109,7 @@ module.exports = (bot) => {
 		);
 	});
 
-	bot.action(/delivery_date_(.+)/, async (ctx) => {
+	bot.action(/delivery_date_([^_]+)/, async (ctx) => {
 		const date = ctx.match[1];
 		const day = await getOrCreateDayByDate(date);
 
@@ -134,7 +137,7 @@ module.exports = (bot) => {
 		);
 	});
 
-	bot.action(/delivery_pick_(.+)_(\d+)/, async (ctx) => {
+	bot.action(/delivery_pick_([^_]+)_(\d+)/, async (ctx) => {
 		await ctx.answerCbQuery();
 
 		ctx.session.state = 'deliveryComment';
@@ -144,12 +147,12 @@ module.exports = (bot) => {
 		await ctx.reply('Введіть коментар (або "ні"):');
 	});
 
-	bot.action(/delivery_add_(.+)/, async (ctx) => {
+	bot.action(/delivery_add_([^_]+)/, async (ctx) => {
 		const date = ctx.match[1];
 		return showDeliveryTemplate(ctx, date);
 	});
 
-	bot.action(/delivery_remove_(.+)/, async (ctx) => {
+	bot.action(/delivery_remove_([^_]+)/, async (ctx) => {
 		const date = ctx.match[1];
 		const day = await getOrCreateDayByDate(date);
 
@@ -181,7 +184,7 @@ module.exports = (bot) => {
 	});
 
 
-	bot.action(/delivery_delete_(\d+)_(.+)/, async (ctx) => {
+	bot.action(/delivery_delete_(\d+)_([^_]+)/, async (ctx) => {
 		const id = ctx.match[1];
 		const date = ctx.match[2];
 
@@ -246,7 +249,7 @@ module.exports = (bot) => {
 		);
 	});
 
-	bot.action(/custom_date_(\d+)_(.+)/, async (ctx) => {
+	bot.action(/custom_date_(\d+)_([^_]+)/, async (ctx) => {
 		const placeId = ctx.match[1];
 		const date = ctx.match[2];
 
@@ -276,7 +279,7 @@ module.exports = (bot) => {
 		);
 	});
 
-	bot.action(/custom_pick_(.+)_(\d+)/, async (ctx) => {
+	bot.action(/custom_pick_([^_]+)_(\d+)/, async (ctx) => {
 		await ctx.answerCbQuery();
 
 		ctx.session.state = 'customComment';
@@ -285,7 +288,7 @@ module.exports = (bot) => {
 		await ctx.reply('Введіть коментар (або "ні"):');
 	});
 
-	bot.action(/custom_add_(\d+)_(.+)/, async (ctx) => {
+	bot.action(/custom_add_(\d+)_([^_]+)/, async (ctx) => {
 		const placeId = ctx.match[1];
 		const date = ctx.match[2];
 
@@ -295,7 +298,7 @@ module.exports = (bot) => {
 		return showDeliveryTemplate(ctx, date, 'custom');
 	});
 
-	bot.action(/custom_remove_(\d+)_(.+)/, async (ctx) => {
+	bot.action(/custom_remove_(\d+)_([^_]+)/, async (ctx) => {
 		const placeId = ctx.match[1];
 		const date = ctx.match[2];
 
@@ -328,7 +331,7 @@ module.exports = (bot) => {
 		);
 	});
 
-	bot.action(/custom_delete_(\d+)_(\d+)_(.+)/, async (ctx) => {
+	bot.action(/custom_delete_(\d+)_(\d+)_([^_]+)/, async (ctx) => {
 		const id = ctx.match[1];
 
 		await run(`DELETE FROM day_items WHERE id = ?`, [id]);
@@ -338,3 +341,4 @@ module.exports = (bot) => {
 		return ctx.reply('✅ Заказний видалено', mainMenu());
 	});
 }
+

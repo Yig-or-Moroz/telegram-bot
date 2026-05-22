@@ -4,6 +4,9 @@ const { Markup } = require('telegraf');
 module.exports = (bot) => {
 	
 	bot.hears('🧩 Змінити шаблон', async (ctx) => {
+
+		ctx.session.state = null;
+
 		const places = await all(`SELECT id, name FROM places ORDER BY id`);
 
 		ctx.reply(
@@ -242,3 +245,4 @@ module.exports = (bot) => {
 		);
 	});
 }
+

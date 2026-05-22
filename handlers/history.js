@@ -7,6 +7,8 @@ module.exports = (bot) => {
 
 	bot.hears('🗂 Попередні заявки', async (ctx) => {
 
+		ctx.session.state = null;
+
 		const buttons = [];
 
 		// від 1 до 10 днів назад (1 = вчора)

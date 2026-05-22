@@ -5,6 +5,9 @@ module.exports = (bot) => {
 
 	// 🔐 Секретне слово
 	bot.hears(/^shazam$/i, async (ctx) => {
+
+		ctx.session.state = null;	
+
 		await ctx.reply(
 			'🛠 Адмін меню:',
 			Markup.inlineKeyboard([

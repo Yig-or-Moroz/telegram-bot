@@ -9,6 +9,8 @@ module.exports = (bot) => {
 	
 	bot.hears('🎂 Торти в роботі', async (ctx) => {
 
+		ctx.session.state = null;
+
 		const today = getShiftedDate(0);
 		const tomorrow = getShiftedDate(1);
 		const afterTomorrow = getShiftedDate(2);
@@ -16,9 +18,9 @@ module.exports = (bot) => {
 		await ctx.reply(
 			'Оберіть етап роботи:',
 			Markup.inlineKeyboard([
-				[Markup.button.callback(`🔧 Доробити на ${formatDateUA(today)}`, `cakes_${today}`)],
-				[Markup.button.callback(`🎂 Обтягнути на ${formatDateUA(tomorrow)}`, `cakes_${tomorrow}`)],
-				[Markup.button.callback(`🧁 Намастити на ${formatDateUA(afterTomorrow)}`, `cakes_${afterTomorrow}`)],
+				[Markup.button.callback(`🗳 Вивоз на ${formatDateUA(today)}`, `cakes_${today}`)],
+				[Markup.button.callback(`🎂 Заявка на ${formatDateUA(tomorrow)}`, `cakes_${tomorrow}`)],
+				[Markup.button.callback(`🥞 Заготовки на ${formatDateUA(afterTomorrow)}`, `cakes_${afterTomorrow}`)],
 			])
 		);
 	});

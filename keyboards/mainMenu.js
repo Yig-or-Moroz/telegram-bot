@@ -8,5 +8,4 @@ module.exports = () =>
 		['🧩 Змінити шаблон'],
 		['🗂 Попередні заявки']
 	])
-	.resize()
-	.oneTime();
+	.resize();
