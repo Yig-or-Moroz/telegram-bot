@@ -26,8 +26,17 @@ module.exports = (bot) => {
 		const date = ctx.match[1];
 		const day = await getOrCreateDayByDate(date);
 
+		let mode = 'normal';
+
+		const afterTomorrow = getShiftedDate(2);
+
+		// якщо відкрили "Заготовки"
+		if (date === afterTomorrow) {
+			mode = 'preparation';
+		}
+
 		await ctx.editMessageText(
-			await buildRequestText(day.id, day.date),
+			await buildRequestText(day.id, day.date, mode),
 			{
 				parse_mode: 'HTML'
 			}

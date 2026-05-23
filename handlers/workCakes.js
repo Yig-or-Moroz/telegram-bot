@@ -29,7 +29,19 @@ module.exports = (bot) => {
 		const date = ctx.match[1];
 		const day = await getOrCreateDayByDate(date);
 
-		const cakes = await getWorkCakesDetailed(day.id, day.date);
+		let mode = 'normal';
+
+		const afterTomorrow = getShiftedDate(2);
+
+		if (date === afterTomorrow) {
+			mode = 'preparation';
+		}
+
+		const cakes = await getWorkCakesDetailed(
+			day.id,
+			day.date,
+			mode
+		);
 
 		if (!cakes.length) {
 			await ctx.editMessageText('Немає тортів у роботі на цей день');

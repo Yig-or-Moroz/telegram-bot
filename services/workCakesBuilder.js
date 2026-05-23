@@ -2,7 +2,7 @@ const { all } = require('../core/db');
 const { getDbDayFromDate } = require('../core/date');
 const { getFinalItemsForPlace } = require('../core/diffEngine');
 
-async function getWorkCakesDetailed(dayId, date) {
+async function getWorkCakesDetailed(dayId, date, mode = 'normal') {
 
 	const dbDay = getDbDayFromDate(date);
 
@@ -27,7 +27,9 @@ async function getWorkCakesDetailed(dayId, date) {
 
 		// ---------- ЗВИЧАЙНІ ----------
 		for (const p of workingPlaces) {
-			const items = await getFinalItemsForPlace(dayId, p.id);
+			const items = await getFinalItemsForPlace(dayId, p.id, {
+				excludeNoPreparation: mode === 'preparation'
+			});
 			const found = items.find(x => x.item_id === item.id);
 			if (found) normal += found.qty;
 		}

@@ -4,7 +4,7 @@ const { getFinalItemsForPlace } = require('../core/diffEngine');
 const { esc } = require('../core/helpers');
 
 
-async function buildRequestText(dayId, date) {
+async function buildRequestText(dayId, date, mode = 'normal') {
 	const jsDay = new Date(date).getDay();
 	const dbDay = jsDay === 0 ? 7 : jsDay;
 
@@ -18,7 +18,11 @@ async function buildRequestText(dayId, date) {
 	let text = `<i>Заявка на ${formatDateUA(date)} р.</i>\n`;
 
 	for (const place of places) {
-		const items = await getFinalItemsForPlace(dayId, place.id);
+		const isPrepView = place.name.includes('Заготовки');
+
+		const items = await getFinalItemsForPlace(dayId, place.id, {
+			excludeNoPreparation: mode === 'preparation'
+		});
 
 		const customs = await all(`
 		SELECT di.quantity, di.comment, i.name
