@@ -166,7 +166,7 @@ module.exports = (bot) => {
 		if (state === 'customComment') {
 			const { customPlaceId, itemId, customDate } = ctx.session;
 
-			const comment = (text.toLowerCase() === 'ні' || text === '') ? '' : text;
+			const comment = text;
 
 			const day = await getOrCreateDayByDate(customDate);
 
@@ -185,7 +185,8 @@ module.exports = (bot) => {
 
 		if (state === 'deliveryComment') {
 			const { itemId, deliveryDate } = ctx.session;
-			const comment = (text.toLowerCase() === 'ні' || text === '') ? '' : text;
+
+			const comment = text;
 
 			const day = await getOrCreateDayByDate(deliveryDate);
 

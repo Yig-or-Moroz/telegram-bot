@@ -141,10 +141,44 @@ module.exports = (bot) => {
 		await ctx.answerCbQuery();
 
 		ctx.session.state = 'deliveryComment';
+
 		ctx.session.deliveryDate = ctx.match[1];
 		ctx.session.itemId = ctx.match[2];
 
-		await ctx.reply('Введіть коментар (або "ні"):');
+		await ctx.reply(
+			'Введіть коментар АБО натисніть кнопку "Без коментаря":',
+			Markup.inlineKeyboard([
+				[
+					Markup.button.callback(
+						'Без коментаря',
+						'delivery_no_comment'
+					)
+				]
+			])
+		);
+	});
+
+	bot.action('delivery_no_comment', async (ctx) => {
+		await ctx.answerCbQuery();
+
+		const {
+			itemId,
+			deliveryDate
+		} = ctx.session;
+
+		const day = await getOrCreateDayByDate(deliveryDate);
+
+		await run(`
+			INSERT INTO day_items
+			(day_id, place_id, item_id, action, quantity, comment, is_custom)
+			VALUES (?, 6, ?, 'add', 1, '', 1)
+		`, [day.id, itemId]);
+
+		ctx.session.state = null;
+		ctx.session.deliveryDate = null;
+		ctx.session.itemId = null;
+
+		return ctx.reply('✅ Додано', mainMenu());
 	});
 
 	bot.action(/delivery_add_([^_]+)/, async (ctx) => {
@@ -283,9 +317,46 @@ module.exports = (bot) => {
 		await ctx.answerCbQuery();
 
 		ctx.session.state = 'customComment';
+
+		ctx.session.customDate = ctx.match[1];
 		ctx.session.itemId = ctx.match[2];
 
-		await ctx.reply('Введіть коментар (або "ні"):');
+		await ctx.reply(
+			'Введіть коментар АБО натисніть кнопку "Без коментаря":',
+			Markup.inlineKeyboard([
+				[
+					Markup.button.callback(
+						'Без коментаря',
+						'custom_no_comment'
+					)
+				]
+			])
+		);
+	});
+
+	bot.action('custom_no_comment', async (ctx) => {
+		await ctx.answerCbQuery();
+
+		const {
+			customPlaceId,
+			itemId,
+			customDate
+		} = ctx.session;
+
+		const day = await getOrCreateDayByDate(customDate);
+
+		await run(`
+			INSERT INTO day_items
+			(day_id, place_id, item_id, action, quantity, comment, is_custom)
+			VALUES (?, ?, ?, 'add', 1, '', 1)
+		`, [day.id, customPlaceId, itemId]);
+
+		ctx.session.state = null;
+		ctx.session.customPlaceId = null;
+		ctx.session.customDate = null;
+		ctx.session.itemId = null;
+
+		return ctx.reply('✅ Заказний додано', mainMenu());
 	});
 
 	bot.action(/custom_add_(\d+)_([^_]+)/, async (ctx) => {
